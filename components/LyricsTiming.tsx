@@ -17,6 +17,7 @@ const LyricsTiming: React.FC<LyricsTimingProps> = ({ lyricsText, audioUrl, backg
   const [timestamps, setTimestamps] = useState<(number | null)[]>(Array(editableLyrics.length).fill(null));
   const [isPlaying, setIsPlaying] = useState(false);
   const [activeLineIndex, setActiveLineIndex] = useState(0);
+  const [playingLineIndex, setPlayingLineIndex] = useState(-1); // New state for playback highlight
   const audioRef = useRef<HTMLAudioElement>(null);
   
   const [currentTime, setCurrentTime] = useState(0);
@@ -29,6 +30,20 @@ const LyricsTiming: React.FC<LyricsTimingProps> = ({ lyricsText, audioUrl, backg
     audio.addEventListener('timeupdate', handleTimeUpdate);
     return () => audio.removeEventListener('timeupdate', handleTimeUpdate);
   }, []);
+
+  // Effect to determine which line is currently playing based on currentTime
+  useEffect(() => {
+    let foundIndex = -1;
+    // Iterate backwards to find the last timestamp that is less than or equal to the current time
+    for (let i = timestamps.length - 1; i >= 0; i--) {
+        if (timestamps[i] !== null && timestamps[i] <= currentTime) {
+            foundIndex = i;
+            break;
+        }
+    }
+    setPlayingLineIndex(foundIndex);
+  }, [currentTime, timestamps]);
+
 
   const handlePlayPause = useCallback(() => {
     if (audioRef.current) {
@@ -192,12 +207,24 @@ const LyricsTiming: React.FC<LyricsTimingProps> = ({ lyricsText, audioUrl, backg
                   endTime = nextStartTime ?? duration;
                 }
 
+                const isLineActive = activeLineIndex === index;
+                const isLinePlaying = playingLineIndex === index;
+
+                let rowClassName = 'border-b border-gray-700/50 transition-colors cursor-pointer';
+                if (isLineActive) {
+                  rowClassName += ' bg-purple-900/50';
+                } else if (isLinePlaying) {
+                  rowClassName += ' bg-purple-800/40';
+                } else {
+                  rowClassName += ' hover:bg-gray-700/30';
+                }
+
                 return (
                   <tr 
                     key={index}
                     id={`lyric-line-${index}`}
                     onClick={() => setActiveLineIndex(index)}
-                    className={`border-b border-gray-700/50 transition-colors cursor-pointer ${activeLineIndex === index ? 'bg-purple-900/50' : 'hover:bg-gray-700/30'}`}
+                    className={rowClassName}
                   >
                     <td className="p-3 text-center w-28 font-mono">
                       <div className="flex items-center justify-center gap-2">

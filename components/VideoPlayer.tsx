@@ -39,6 +39,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   const audioRef = useRef<HTMLAudioElement>(null);
   const [fontSize, setFontSize] = useState(48);
   const [fontFamily, setFontFamily] = useState('sans-serif');
+  const ffmpegRef = useRef<any>(null);
+  const isExportCancelled = useRef(false);
 
 
   useEffect(() => {
@@ -113,118 +115,175 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     URL.revokeObjectURL(url);
   };
 
+  const handleCancelExport = () => {
+    isExportCancelled.current = true;
+    if (ffmpegRef.current) {
+      try {
+        ffmpegRef.current.exit();
+      } catch (e) {
+        console.warn('Could not terminate FFmpeg process.', e);
+      }
+    }
+    ffmpegRef.current = null;
+    setExportProgress(null);
+  };
+
   const handleExportMp4 = async () => {
     if (!audioRef.current || !imageUrl) return;
 
-    const VIDEO_WIDTH = 1280;
-    const VIDEO_HEIGHT = 720;
-    const FRAME_RATE = 30;
+    isExportCancelled.current = false;
+    setExportProgress({ message: '正在初始化...', progress: 0 });
 
-    setExportProgress({ message: '正在渲染動畫...', progress: 0 });
+    try {
+      const VIDEO_WIDTH = 1280;
+      const VIDEO_HEIGHT = 720;
+      const FRAME_RATE = 30;
 
-    const canvas = document.createElement('canvas');
-    canvas.width = VIDEO_WIDTH;
-    canvas.height = VIDEO_HEIGHT;
-    const ctx = canvas.getContext('2d')!;
+      const canvas = document.createElement('canvas');
+      canvas.width = VIDEO_WIDTH;
+      canvas.height = VIDEO_HEIGHT;
+      const ctx = canvas.getContext('2d')!;
 
-    const stream = canvas.captureStream(FRAME_RATE);
-    const recorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
-    const videoChunks: Blob[] = [];
-    recorder.ondataavailable = (e) => videoChunks.push(e.data);
-    
-    const recordingPromise = new Promise<Blob>((resolve) => {
-      recorder.onstop = () => resolve(new Blob(videoChunks, { type: 'video/webm' }));
-    });
+      const mimeTypes = [
+        'video/webm; codecs=vp9',
+        'video/webm; codecs=vp8',
+        'video/webm',
+      ];
+      const supportedMimeType = mimeTypes.find(type => MediaRecorder.isTypeSupported(type));
 
-    const bgImage = new Image();
-    bgImage.crossOrigin = "anonymous";
-    const bgImagePromise = new Promise((resolve) => { bgImage.onload = resolve; });
-    bgImage.src = imageUrl;
-    await bgImagePromise;
+      if (!supportedMimeType) {
+        alert('您的瀏覽器不支援影片錄製功能，無法匯出 MP4。請嘗試更新您的瀏覽器（建議使用 Chrome 或 Firefox）。');
+        setExportProgress(null);
+        return;
+      }
 
-    const duration = audioRef.current.duration;
-    audioRef.current.currentTime = 0;
-    recorder.start();
+      const stream = canvas.captureStream(FRAME_RATE);
+      const recorder = new MediaRecorder(stream, { mimeType: supportedMimeType });
+      const videoChunks: Blob[] = [];
+      recorder.ondataavailable = (e) => videoChunks.push(e.data);
 
-    for (let i = 0; i < duration * FRAME_RATE; i++) {
+      const recordingPromise = new Promise<Blob | null>((resolve) => {
+        recorder.onstop = () => {
+          resolve(videoChunks.length > 0 ? new Blob(videoChunks, { type: 'video/webm' }) : null);
+        };
+      });
+
+      const bgImage = new Image();
+      bgImage.crossOrigin = 'anonymous';
+      const bgImagePromise = new Promise((resolve, reject) => {
+        bgImage.onload = resolve;
+        bgImage.onerror = reject;
+      });
+      bgImage.src = imageUrl;
+      await bgImagePromise;
+
+      const duration = audioRef.current.duration;
+      audioRef.current.currentTime = 0;
+      recorder.start();
+
+      for (let i = 0; i < duration * FRAME_RATE; i++) {
+        if (isExportCancelled.current) {
+          if (recorder.state === 'recording') recorder.stop();
+          console.log('Export cancelled during frame rendering.');
+          return;
+        }
+
         const time = i / FRAME_RATE;
-        
+
         ctx.drawImage(bgImage, 0, 0, VIDEO_WIDTH, VIDEO_HEIGHT);
         ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
         ctx.fillRect(0, 0, VIDEO_WIDTH, VIDEO_HEIGHT);
-        
-        // Draw album art
+
         const artSize = VIDEO_HEIGHT * 0.6;
         const artX = VIDEO_WIDTH * 0.15;
         const artY = (VIDEO_HEIGHT - artSize) / 2;
         ctx.drawImage(bgImage, artX, artY, artSize, artSize);
 
-        // Draw lyric
-        const lyric = timedLyrics.find(l => time >= l.startTime && time < l.endTime);
+        const lyric = timedLyrics.find((l) => time >= l.startTime && time < l.endTime);
         if (lyric) {
-            const timeInLyric = time - lyric.startTime;
-            const animationDuration = 0.5; // matches CSS
-            const opacity = Math.min(1, timeInLyric / animationDuration);
-            const translateY = 20 * (1 - opacity);
+          const timeInLyric = time - lyric.startTime;
+          const animationDuration = 0.5;
+          const opacity = Math.min(1, timeInLyric / animationDuration);
+          const translateY = 20 * (1 - opacity);
 
-            ctx.save();
-            ctx.font = `bold ${fontSize * (VIDEO_WIDTH/1280)}px ${fontFamily}`;
-            ctx.fillStyle = `rgba(255, 255, 255, ${opacity})`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.shadowColor = 'rgba(0,0,0,0.7)';
-            ctx.shadowBlur = 10;
-            const lyricX = artX + artSize + (VIDEO_WIDTH - (artX + artSize)) / 2;
-            ctx.fillText(lyric.text, lyricX, VIDEO_HEIGHT / 2 + translateY);
-            ctx.restore();
+          ctx.save();
+          ctx.font = `bold ${fontSize * (VIDEO_WIDTH / 1280)}px ${fontFamily}`;
+          ctx.fillStyle = `rgba(255, 255, 255, ${opacity})`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.shadowColor = 'rgba(0,0,0,0.7)';
+          ctx.shadowBlur = 10;
+          const lyricX = artX + artSize + (VIDEO_WIDTH - (artX + artSize)) / 2;
+          ctx.fillText(lyric.text, lyricX, VIDEO_HEIGHT / 2 + translateY);
+          ctx.restore();
         }
 
         await new Promise(requestAnimationFrame);
-        if(i % 10 === 0) {
-             setExportProgress({ message: '正在渲染動畫...', progress: Math.round((time / duration) * 50) });
+        if (i % 10 === 0) {
+          setExportProgress({ message: '正在渲染動畫...', progress: Math.round((time / duration) * 50) });
         }
-    }
-    
-    recorder.stop();
-    const silentVideoBlob = await recordingPromise;
+      }
 
-    setExportProgress({ message: '正在初始化編碼器...', progress: 50 });
-    const { createFFmpeg } = window.FFmpeg;
-    const ffmpeg = createFFmpeg({
+      if (recorder.state === 'recording') recorder.stop();
+      const silentVideoBlob = await recordingPromise;
+
+      if (isExportCancelled.current || !silentVideoBlob) {
+        console.log('Export cancelled or failed before encoding.');
+        return;
+      }
+
+      setExportProgress({ message: '正在初始化編碼器...', progress: 50 });
+      const { createFFmpeg } = window.FFmpeg;
+      const ffmpeg = createFFmpeg({
         log: true,
         corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
-    });
-    await ffmpeg.load();
+      });
+      ffmpegRef.current = ffmpeg;
 
-    setExportProgress({ message: '正在合成音訊與視訊...', progress: 60 });
-    ffmpeg.FS('writeFile', 'video.webm', await fetchFile(silentVideoBlob));
-    ffmpeg.FS('writeFile', 'audio.mp3', await fetchFile(audioUrl));
+      await ffmpeg.load();
+      if (isExportCancelled.current) {
+        return;
+      }
 
-    ffmpeg.setProgress(({ ratio }) => {
-        setExportProgress({ message: '正在合成音訊與視訊...', progress: 60 + Math.round(ratio * 40) });
-    });
+      setExportProgress({ message: '正在準備檔案...', progress: 55 });
+      ffmpeg.FS('writeFile', 'video.webm', await fetchFile(silentVideoBlob));
+      ffmpeg.FS('writeFile', 'audio.mp3', await fetchFile(audioUrl));
 
-    await ffmpeg.run('-i', 'video.webm', '-i', 'audio.mp3', '-c:v', 'copy', '-c:a', 'aac', '-shortest', 'output.mp4');
+      ffmpeg.setProgress(({ ratio }) => {
+        if (isExportCancelled.current) return;
+        setExportProgress({ message: '正在編碼影片...', progress: 55 + Math.round(ratio * 45) });
+      });
 
-    const data = ffmpeg.FS('readFile', 'output.mp4');
-    const videoUrl = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
+      await ffmpeg.run('-i', 'video.webm', '-i', 'audio.mp3', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', 'output.mp4');
 
-    const a = document.createElement('a');
-    a.href = videoUrl;
-    a.download = 'lyric-video.mp4';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(videoUrl);
+      if (isExportCancelled.current) {
+        return;
+      }
 
-    setExportProgress(null);
+      const data = ffmpeg.FS('readFile', 'output.mp4');
+      const videoUrl = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
+
+      const a = document.createElement('a');
+      a.href = videoUrl;
+      a.download = 'lyric-video.mp4';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(videoUrl);
+    } catch (error) {
+      console.error('MP4 導出失敗:', error);
+      alert('影片匯出失敗！\n\n編碼過程中發生錯誤。這可能是由於影片時間過長、瀏覽器記憶體不足或音訊檔案格式問題所導致。\n\n建議操作：\n1. 嘗試匯出較短的片段。\n2. 關閉其他瀏覽器分頁後再試一次。\n3. 確認您的音訊檔案 (.mp3, .wav) 沒有損壞。');
+    } finally {
+      ffmpegRef.current = null;
+      setExportProgress(null);
+    }
   };
   
   const durationValue = audioRef.current?.duration || 0;
 
   return (
     <>
-      {exportProgress && <Loader message={exportProgress.message} progress={exportProgress.progress} />}
+      {exportProgress && <Loader message={exportProgress.message} progress={exportProgress.progress} onCancel={handleCancelExport} />}
       <div className="w-full max-w-6xl mx-auto">
         <audio ref={audioRef} src={audioUrl} onLoadedMetadata={() => setCurrentTime(0)} />
         
