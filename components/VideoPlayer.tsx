@@ -4,6 +4,7 @@ import PlayIcon from './icons/PlayIcon';
 import PauseIcon from './icons/PauseIcon';
 import PrevIcon from './icons/PrevIcon';
 import Loader from './Loader';
+import KaraokeLyric from './KaraokeLyric';
 
 // Allows access to the FFmpeg library loaded from the script tag in index.html
 declare global {
@@ -20,9 +21,9 @@ interface VideoPlayerProps {
 }
 
 const fetchFile = async (url: string | Blob): Promise<Uint8Array> => {
-  const response = await fetch(url instanceof Blob ? URL.createObjectURL(url) : url);
-  const data = await response.arrayBuffer();
-  return new Uint8Array(data);
+  const isBlob = url instanceof Blob;
+  const buffer = isBlob ? await url.arrayBuffer() : await (await fetch(url)).arrayBuffer();
+  return new Uint8Array(buffer);
 };
 
 const fontOptions = [
@@ -96,15 +97,19 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     return `${h}:${m}:${s},${ms}`;
   };
 
-  const handleExportSrt = () => {
+  const generateSrtContent = () => {
     let srtContent = '';
     timedLyrics.forEach((lyric, index) => {
-      const startTime = formatSrtTime(lyric.startTime);
-      const endTime = formatSrtTime(lyric.endTime);
-      srtContent += `${index + 1}\n${startTime} --> ${endTime}\n${lyric.text}\n\n`;
+        const startTime = formatSrtTime(lyric.startTime);
+        const endTime = formatSrtTime(lyric.endTime);
+        srtContent += `${index + 1}\n${startTime} --> ${endTime}\n${lyric.text}\n\n`;
     });
+    return srtContent;
+  }
 
-    const blob = new Blob([srtContent], { type: 'text/plain' });
+  const handleExportSrt = () => {
+    const srtContent = generateSrtContent();
+    const blob = new Blob([srtContent], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -119,6 +124,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     isExportCancelled.current = true;
     if (ffmpegRef.current) {
       try {
+        // This is the correct way to stop the process for this version
         ffmpegRef.current.exit();
       } catch (e) {
         console.warn('Could not terminate FFmpeg process.', e);
@@ -135,149 +141,87 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     setExportProgress({ message: '正在初始化...', progress: 0 });
 
     try {
-      const VIDEO_WIDTH = 1280;
-      const VIDEO_HEIGHT = 720;
-      const FRAME_RATE = 30;
+        setExportProgress({ message: '正在初始化編碼器...', progress: 0 });
+        const { createFFmpeg } = window.FFmpeg;
+        const ffmpeg = createFFmpeg({
+            log: true,
+            // Use the single-threaded core to avoid SharedArrayBuffer issues.
+            corePath: 'https://unpkg.com/@ffmpeg/core-st@0.11.0/dist/ffmpeg-core.js',
+        });
+        ffmpegRef.current = ffmpeg;
 
-      const canvas = document.createElement('canvas');
-      canvas.width = VIDEO_WIDTH;
-      canvas.height = VIDEO_HEIGHT;
-      const ctx = canvas.getContext('2d')!;
-
-      const mimeTypes = [
-        'video/webm; codecs=vp9',
-        'video/webm; codecs=vp8',
-        'video/webm',
-      ];
-      const supportedMimeType = mimeTypes.find(type => MediaRecorder.isTypeSupported(type));
-
-      if (!supportedMimeType) {
-        alert('您的瀏覽器不支援影片錄製功能，無法匯出 MP4。請嘗試更新您的瀏覽器（建議使用 Chrome 或 Firefox）。');
-        setExportProgress(null);
-        return;
-      }
-
-      const stream = canvas.captureStream(FRAME_RATE);
-      const recorder = new MediaRecorder(stream, { mimeType: supportedMimeType });
-      const videoChunks: Blob[] = [];
-      recorder.ondataavailable = (e) => videoChunks.push(e.data);
-
-      const recordingPromise = new Promise<Blob | null>((resolve) => {
-        recorder.onstop = () => {
-          resolve(videoChunks.length > 0 ? new Blob(videoChunks, { type: 'video/webm' }) : null);
-        };
-      });
-
-      const bgImage = new Image();
-      bgImage.crossOrigin = 'anonymous';
-      const bgImagePromise = new Promise((resolve, reject) => {
-        bgImage.onload = resolve;
-        bgImage.onerror = reject;
-      });
-      bgImage.src = imageUrl;
-      await bgImagePromise;
-
-      const duration = audioRef.current.duration;
-      audioRef.current.currentTime = 0;
-      recorder.start();
-
-      for (let i = 0; i < duration * FRAME_RATE; i++) {
-        if (isExportCancelled.current) {
-          if (recorder.state === 'recording') recorder.stop();
-          console.log('Export cancelled during frame rendering.');
-          return;
-        }
-
-        const time = i / FRAME_RATE;
-
-        ctx.drawImage(bgImage, 0, 0, VIDEO_WIDTH, VIDEO_HEIGHT);
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-        ctx.fillRect(0, 0, VIDEO_WIDTH, VIDEO_HEIGHT);
-
-        const artSize = VIDEO_HEIGHT * 0.6;
-        const artX = VIDEO_WIDTH * 0.15;
-        const artY = (VIDEO_HEIGHT - artSize) / 2;
-        ctx.drawImage(bgImage, artX, artY, artSize, artSize);
-
-        const lyric = timedLyrics.find((l) => time >= l.startTime && time < l.endTime);
-        if (lyric) {
-          const timeInLyric = time - lyric.startTime;
-          const animationDuration = 0.5;
-          const opacity = Math.min(1, timeInLyric / animationDuration);
-          const translateY = 20 * (1 - opacity);
-
-          ctx.save();
-          ctx.font = `bold ${fontSize * (VIDEO_WIDTH / 1280)}px ${fontFamily}`;
-          ctx.fillStyle = `rgba(255, 255, 255, ${opacity})`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.shadowColor = 'rgba(0,0,0,0.7)';
-          ctx.shadowBlur = 10;
-          const lyricX = artX + artSize + (VIDEO_WIDTH - (artX + artSize)) / 2;
-          ctx.fillText(lyric.text, lyricX, VIDEO_HEIGHT / 2 + translateY);
-          ctx.restore();
-        }
-
-        await new Promise(requestAnimationFrame);
-        if (i % 10 === 0) {
-          setExportProgress({ message: '正在渲染動畫...', progress: Math.round((time / duration) * 50) });
-        }
-      }
-
-      if (recorder.state === 'recording') recorder.stop();
-      const silentVideoBlob = await recordingPromise;
-
-      if (isExportCancelled.current || !silentVideoBlob) {
-        console.log('Export cancelled or failed before encoding.');
-        return;
-      }
-
-      setExportProgress({ message: '正在初始化編碼器...', progress: 50 });
-      const { createFFmpeg } = window.FFmpeg;
-      const ffmpeg = createFFmpeg({
-        log: true,
-        corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
-      });
-      ffmpegRef.current = ffmpeg;
-
-      await ffmpeg.load();
-      if (isExportCancelled.current) {
-        return;
-      }
-
-      setExportProgress({ message: '正在準備檔案...', progress: 55 });
-      ffmpeg.FS('writeFile', 'video.webm', await fetchFile(silentVideoBlob));
-      ffmpeg.FS('writeFile', 'audio.mp3', await fetchFile(audioUrl));
-
-      ffmpeg.setProgress(({ ratio }) => {
+        await ffmpeg.load();
         if (isExportCancelled.current) return;
-        setExportProgress({ message: '正在編碼影片...', progress: 55 + Math.round(ratio * 45) });
-      });
 
-      await ffmpeg.run('-i', 'video.webm', '-i', 'audio.mp3', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', 'output.mp4');
+        setExportProgress({ message: '正在準備資源...', progress: 10 });
+        const FONT_URL = 'https://storage.googleapis.com/aistudio-hosting/fonts/NotoSansTC-Regular.otf';
+        const [image, audio, font] = await Promise.all([
+            fetchFile(imageUrl),
+            fetchFile(audioUrl),
+            fetchFile(FONT_URL)
+        ]);
 
-      if (isExportCancelled.current) {
-        return;
-      }
+        ffmpeg.FS('writeFile', 'image.jpg', image);
+        ffmpeg.FS('writeFile', 'audio.mp3', audio);
+        ffmpeg.FS('writeFile', 'font.otf', font);
+        
+        const srtContent = generateSrtContent();
+        ffmpeg.FS('writeFile', 'lyrics.srt', srtContent);
+        
+        if (isExportCancelled.current) return;
 
-      const data = ffmpeg.FS('readFile', 'output.mp4');
-      const videoUrl = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
+        setExportProgress({ message: '正在生成影片指令...', progress: 20 });
+        
+        const scaledFontSize = Math.round(fontSize * 0.75); // Scale font size for video
+        
+        const subtitlesFilter = `subtitles=lyrics.srt:force_style='FontName=Noto Sans TC,FontSize=${scaledFontSize},PrimaryColour=&HFFFFFF,OutlineColour=&H000000,BorderStyle=1,Outline=1,Shadow=1,MarginV=50'`;
+        const vf = `scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:-1:-1:color=black,${subtitlesFilter}`;
+        
+        ffmpeg.setProgress(({ ratio }) => {
+            if (isExportCancelled.current) return;
+            const progress = 20 + Math.round(ratio * 80);
+            setExportProgress({ message: '正在編碼影片...', progress: Math.min(progress, 100) });
+        });
+        
+        setExportProgress({ message: '正在編碼影片...', progress: 21 });
 
-      const a = document.createElement('a');
-      a.href = videoUrl;
-      a.download = 'lyric-video.mp4';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(videoUrl);
+        await ffmpeg.run(
+            '-loop', '1',
+            '-i', 'image.jpg',
+            '-i', 'audio.mp3',
+            '-vf', vf,
+            '-c:v', 'libx264',
+            '-tune', 'stillimage',
+            '-preset', 'ultrafast',
+            '-pix_fmt', 'yuv420p',
+            '-c:a', 'aac',
+            '-shortest',
+            'output.mp4'
+        );
+
+        if (isExportCancelled.current) return;
+
+        const data = ffmpeg.FS('readFile', 'output.mp4');
+        const videoUrl = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
+
+        const a = document.createElement('a');
+        a.href = videoUrl;
+        a.download = 'lyric-video.mp4';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(videoUrl);
+
     } catch (error) {
-      console.error('MP4 導出失敗:', error);
-      alert('影片匯出失敗！\n\n編碼過程中發生錯誤。這可能是由於影片時間過長、瀏覽器記憶體不足或音訊檔案格式問題所導致。\n\n建議操作：\n1. 嘗試匯出較短的片段。\n2. 關閉其他瀏覽器分頁後再試一次。\n3. 確認您的音訊檔案 (.mp3, .wav) 沒有損壞。');
+        console.error('MP4 導出失敗:', error);
+        if (!isExportCancelled.current) {
+            alert('影片匯出失敗！\n\n編碼過程中發生錯誤。這可能是由於影片時間過長、瀏覽器記憶體不足或音訊檔案格式問題所導致。\n\n建議操作：\n1. 嘗試匯出較短的片段。\n2. 關閉其他瀏覽器分頁後再試一次。\n3. 確認您的音訊檔案 (.mp3, .wav) 沒有損壞。');
+        }
     } finally {
-      ffmpegRef.current = null;
-      setExportProgress(null);
+        ffmpegRef.current = null;
+        setExportProgress(null);
     }
-  };
+};
   
   const durationValue = audioRef.current?.duration || 0;
 
@@ -298,16 +242,18 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                 <div className="w-full text-center text-white">
                     <div className="h-24 flex items-center justify-center">
                       {currentLyric ? (
-                          <p 
-                            key={currentLyric.text} 
-                            className="font-bold drop-shadow-lg animate-fade-in-up"
-                            style={{
-                              fontSize: `${fontSize}px`,
-                              fontFamily: fontFamily,
-                            }}
-                          >
-                              {currentLyric.text}
-                          </p>
+                          <KaraokeLyric
+                              key={currentLyric.startTime}
+                              text={currentLyric.text}
+                              startTime={currentLyric.startTime}
+                              endTime={currentLyric.endTime}
+                              currentTime={currentTime}
+                              isPlaying={isPlaying}
+                              style={{
+                                fontSize: `${fontSize}px`,
+                                fontFamily: fontFamily,
+                              }}
+                           />
                       ) : (
                           <p className="text-gray-600" style={{ fontSize: `${fontSize}px`, fontFamily: fontFamily, }}>...</p>
                       )}

@@ -2,21 +2,31 @@ import React from 'react';
 
 interface KaraokeLyricProps {
   text: string;
-  duration?: number;
+  startTime: number;
+  endTime: number;
+  currentTime: number;
   isPlaying: boolean;
+  style?: React.CSSProperties;
 }
 
-const KaraokeLyric: React.FC<KaraokeLyricProps> = ({ text, duration = 5000, isPlaying }) => {
+const KaraokeLyric: React.FC<KaraokeLyricProps> = ({ text, startTime, endTime, currentTime, isPlaying, style }) => {
+  const duration = (endTime - startTime) * 1000;
+  // Negative delay makes the animation jump to the correct progress if we start mid-lyric
+  const delay = (startTime - currentTime) * 1000;
+
   const animationStyle: React.CSSProperties = {
-    // A linear gradient moving from left to right.
-    // The highlighted color is bright white, the upcoming color is a muted gray.
-    backgroundImage: `linear-gradient(to right, #FFFFFF 50%, #9ca3af 50%)`, // white to tailwind gray-400
+    ...style,
+    backgroundImage: `linear-gradient(to right, #FFFFFF 50%, #9ca3af 50%)`,
     backgroundSize: '200% 100%',
-    backgroundPosition: '100%', // Start with the gray color fully visible
+    backgroundPosition: '100%',
     WebkitBackgroundClip: 'text',
     backgroundClip: 'text',
     color: 'transparent',
-    animation: `karaoke-highlight ${duration}ms linear forwards`,
+    animationName: 'karaoke-highlight',
+    animationDuration: `${Math.max(0, duration)}ms`, // Ensure duration isn't negative
+    animationDelay: `${delay}ms`,
+    animationTimingFunction: 'linear',
+    animationFillMode: 'forwards',
     animationPlayState: isPlaying ? 'running' : 'paused',
   };
 
@@ -30,7 +40,7 @@ const KaraokeLyric: React.FC<KaraokeLyricProps> = ({ text, duration = 5000, isPl
           }
         `}
       </style>
-      <p style={animationStyle} className="text-center text-xl md:text-2xl font-semibold tracking-wide">
+      <p style={animationStyle} className="text-center font-bold drop-shadow-lg tracking-wide">
         {text}
       </p>
     </>
