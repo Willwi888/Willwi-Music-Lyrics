@@ -26,6 +26,33 @@ const resolutions: { [key: string]: { width: number; height: number } } = {
   '1080p': { width: 1920, height: 1080 },
 };
 
+const colorThemes: { [key: string]: { name: string; active: string; inactive1: string; inactive2: string; info: string; subInfo: string; } } = {
+  light: {
+    name: '明亮',
+    active: '#FFFFFF',
+    inactive1: '#E5E7EB',
+    inactive2: '#D1D5DB',
+    info: '#FFFFFF',
+    subInfo: '#E5E7EB',
+  },
+  dark: {
+    name: '深邃',
+    active: '#1F2937',
+    inactive1: '#4B5563',
+    inactive2: '#6B7280',
+    info: '#1F2937',
+    subInfo: '#4B5563',
+  },
+  colorized: {
+    name: '多彩',
+    active: '#FBBF24', // Amber 400
+    inactive1: '#FFFFFF',
+    inactive2: '#E5E7EB',
+    info: '#FBBF24',
+    subInfo: '#FFFFFF',
+  },
+};
+
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageUrl, songTitle, artistName, onBack }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -34,9 +61,15 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   const audioRef = useRef<HTMLAudioElement>(null);
   const [fontSize, setFontSize] = useState(48);
   const [fontFamily, setFontFamily] = useState('sans-serif');
+  const [colorTheme, setColorTheme] = useState('light');
   const [resolution, setResolution] = useState('720p');
   const [includeAlbumArt, setIncludeAlbumArt] = useState(true);
+  const [animationStyle, setAnimationStyle] = useState('disc'); // 'disc' or 'vertical'
+  const [hasPlaybackStarted, setHasPlaybackStarted] = useState(false);
   const isExportCancelled = useRef(false);
+  
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const mediaElementSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
 
   const lyricsContainerRef = useRef<HTMLDivElement>(null);
   const lyricRefs = useRef<(HTMLParagraphElement | null)[]>([]);
@@ -71,6 +104,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     return () => {
       audio.removeEventListener('timeupdate', timeUpdateHandler);
       audio.removeEventListener('ended', endedHandler);
+    };
+  }, []);
+
+  // Effect to clean up the persistent AudioContext on component unmount
+  useEffect(() => {
+    return () => {
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        mediaElementSourceRef.current?.disconnect();
+        audioContextRef.current.close();
+      }
     };
   }, []);
   
@@ -122,6 +165,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                 setCurrentTime(0);
                 setIsEnded(false);
             }
+            if (!hasPlaybackStarted) {
+                setHasPlaybackStarted(true);
+            }
             audioRef.current.play();
         }
         setIsPlaying(!isPlaying);
@@ -134,6 +180,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       audioRef.current.currentTime = time;
       setCurrentTime(time);
       setIsEnded(false);
+      if (!hasPlaybackStarted && time > 0) {
+        setHasPlaybackStarted(true);
+      }
     }
   };
   
@@ -182,7 +231,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   const getLyricStyle = (index: number, currentIdx?: number, baseFontSize: number = fontSize) => {
     const activeIndex = currentIdx !== undefined ? currentIdx : currentIndex;
     const distance = Math.abs(index - activeIndex);
-    const rotation = (activeIndex - index) * 10;
+    const rotation = animationStyle === 'disc' ? (activeIndex - index) * 10 : 0;
+    const theme = colorThemes[colorTheme];
 
     const style: { 
         transition: string;
@@ -204,7 +254,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         opacity: 0,
         transform: 'scale(0.8)',
         fontSize: `${baseFontSize * 0.6}px`,
-        color: '#D1D5DB',
+        color: theme.inactive2,
         font: ''
     };
     
@@ -216,26 +266,26 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         calculatedFontSize = baseFontSize;
         scale = 1;
         style.opacity = 1;
-        style.color = '#FFFFFF';
+        style.color = theme.active;
         style.fontWeight = 700;
         break;
       case 1: // Immediate neighbors
         calculatedFontSize = baseFontSize * 0.8;
         scale = 0.95;
         style.opacity = 0.7;
-        style.color = '#E5E7EB';
+        style.color = theme.inactive1;
         break;
       case 2: // Further neighbors
         calculatedFontSize = baseFontSize * 0.7;
         scale = 0.9;
         style.opacity = 0.4;
-        style.color = '#D1D5DB';
+        style.color = theme.inactive2;
         break;
       default: // Hidden lyrics
         calculatedFontSize = baseFontSize * 0.6;
         scale = 0.8;
         style.opacity = 0;
-        style.color = '#D1D5DB';
+        style.color = theme.inactive2;
         break;
     }
     
@@ -280,11 +330,23 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       const wasPlaying = isPlaying;
       if (wasPlaying) handlePlayPause(); // Pause playback before starting
 
-      const audioContext = new AudioContext();
-      const audioSource = audioContext.createMediaElementSource(audio);
+      // --- REFACTORED AUDIO CONTEXT HANDLING ---
+      // Lazily create and reuse the AudioContext and MediaElementSourceNode
+      if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        mediaElementSourceRef.current = null; // Force source recreation if context is new
+      }
+      const audioContext = audioContextRef.current;
+      
+      if (!mediaElementSourceRef.current) {
+        mediaElementSourceRef.current = audioContext.createMediaElementSource(audio);
+        mediaElementSourceRef.current.connect(audioContext.destination);
+      }
+      const audioSource = mediaElementSourceRef.current;
+      // --- END REFACTORED AUDIO CONTEXT HANDLING ---
+
       const audioDestination = audioContext.createMediaStreamDestination();
       audioSource.connect(audioDestination);
-      audioSource.connect(audioContext.destination); // So we can hear it while recording
       const audioStream = audioDestination.stream;
 
       const videoStream = canvas.captureStream(30);
@@ -321,7 +383,12 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         
         // Cleanup
         combinedStream.getTracks().forEach(track => track.stop());
-        audioContext.close();
+        // Disconnect the temporary destination node, but keep the context alive
+        try {
+          audioSource.disconnect(audioDestination);
+        } catch (e) {
+          console.warn("Could not disconnect audio destination.", e);
+        }
         setExportProgress(null);
         if(wasPlaying) audio.play();
       };
@@ -334,11 +401,12 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       
       const scaleFactor = canvas.height / 720;
       const exportFontSize = fontSize * scaleFactor;
-      const lyricLineHeight = exportFontSize * 1.5;
+      const lyricLineHeight = exportFontSize * 2.5;
       
       const initialTranslateY = canvas.height / 2 - (2 * lyricLineHeight) - lyricLineHeight / 2;
       let currentCanvasTranslateY = initialTranslateY;
 
+      const theme = colorThemes[colorTheme];
 
       const drawFrame = () => {
         const currentPlaybackTime = audio.currentTime;
@@ -369,7 +437,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         }
 
         setExportProgress({ 
-          message: `正在錄製影片...`, 
+          message: `經紀人趕工中...`, 
           progress,
           details: estimatedTimeRemainingDetails
         });
@@ -412,12 +480,12 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
             ctx.drawImage(albumImage, albumX, albumY, albumArtSize, albumArtSize);
             ctx.restore();
     
-            ctx.fillStyle = 'white';
+            ctx.fillStyle = theme.info;
             ctx.textAlign = 'center';
             ctx.font = `700 ${24 * scaleFactor}px ${fontFamily}`;
             ctx.fillText(songTitle, leftColWidth + rightColWidth / 2, albumY + albumArtSize + (40 * scaleFactor), rightColWidth * 0.9);
             
-            ctx.fillStyle = '#E5E7EB';
+            ctx.fillStyle = theme.subInfo;
             ctx.font = `500 ${20 * scaleFactor}px ${fontFamily}`;
             ctx.fillText(artistName, leftColWidth + rightColWidth / 2, albumY + albumArtSize + (70 * scaleFactor), rightColWidth * 0.9);
 
@@ -488,6 +556,19 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
             ctx.restore();
         }
 
+        // --- Draw Watermark ---
+        ctx.save();
+        const watermarkPadding = 20 * scaleFactor;
+        const watermarkFontSize = 24 * scaleFactor;
+        ctx.font = `italic ${watermarkFontSize}px cursive`; // A generic cursive font
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.5)'; // Semi-transparent white
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
+        ctx.shadowBlur = 4 * scaleFactor;
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText('浮水映', canvas.width - watermarkPadding, canvas.height - watermarkPadding);
+        ctx.restore();
+
         // --- End Drawing ---
         animationFrameId = requestAnimationFrame(drawFrame);
       };
@@ -501,6 +582,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   };
   
   const durationValue = audioRef.current?.duration || 0;
+  const currentTheme = colorThemes[colorTheme];
 
   return (
     <>
@@ -512,19 +594,25 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         <div className="w-full aspect-video bg-gray-900 rounded-xl shadow-2xl ring-1 ring-white/10 relative overflow-hidden mb-4">
           <img src={imageUrl} alt="背景" className="absolute inset-0 w-full h-full object-cover z-0 filter blur-xl scale-110" />
           <div className="absolute inset-0 bg-black/40" />
+          <div 
+            className="absolute bottom-4 right-6 z-20 text-white text-opacity-50 font-[cursive] text-2xl select-none pointer-events-none" 
+            style={{ textShadow: '1px 1px 3px rgba(0,0,0,0.7)' }}
+          >
+            浮水映
+          </div>
           
            <div className="relative z-10 w-full h-full flex p-4 sm:p-8 items-center">
               {/* Lyrics Column */}
               <div className={`h-full flex flex-col justify-center overflow-hidden transition-all duration-500 ease-in-out ${includeAlbumArt ? 'w-3/5 items-start' : 'w-full items-center'}`}>
                 <div 
                     ref={lyricsContainerRef} 
-                    className={`transition-transform duration-500 ease-in-out ${includeAlbumArt ? 'w-full' : 'w-auto'}`}
+                    className={`transition-transform duration-500 ease-in-out ${includeAlbumArt ? 'w-full' : 'w-auto'} transition-opacity ${hasPlaybackStarted ? 'opacity-100' : 'opacity-0'}`}
                 >
                     {lyricsToRender.map((lyric, index) => (
                         <p
                             key={index}
                             ref={el => { lyricRefs.current[index] = el; }}
-                            className={`p-2 tracking-wide leading-tight whitespace-nowrap ${includeAlbumArt ? '' : 'text-center'}`}
+                            className={`px-2 py-4 tracking-wide leading-relaxed whitespace-nowrap ${includeAlbumArt ? '' : 'text-center'}`}
                             style={getLyricStyle(index)}
                         >
                             {lyric.text || '\u00A0' /* Non-breaking space for empty/dummy lines */}
@@ -537,9 +625,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                {includeAlbumArt && (
                   <div className="w-2/5 h-full flex flex-col justify-center items-center pl-4">
                     <img src={imageUrl} alt="專輯封面" className="w-full max-w-[280px] aspect-square object-cover bg-black/20 rounded-xl shadow-2xl ring-1 ring-white/10" />
-                    <div className="text-center mt-4 p-2 text-white w-full max-w-[280px]">
-                        <p className="font-bold text-lg truncate" title={songTitle}>{songTitle}</p>
-                        <p className="text-gray-300 truncate" title={artistName}>{artistName}</p>
+                    <div className="text-center mt-4 p-2 w-full max-w-[280px]">
+                        <p className="font-bold text-lg truncate" title={songTitle} style={{ color: currentTheme.info }}>{songTitle}</p>
+                        <p className="truncate" title={artistName} style={{ color: currentTheme.subInfo }}>{artistName}</p>
                     </div>
                   </div>
                )}
@@ -570,6 +658,18 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
               </button>
               <div className="flex items-center gap-2 sm:gap-4 flex-wrap justify-end">
                 <div className="flex items-center gap-2 text-white">
+                    <label htmlFor="animation-style" className="text-xs">動畫</label>
+                    <select
+                        id="animation-style"
+                        value={animationStyle}
+                        onChange={(e) => setAnimationStyle(e.target.value)}
+                        className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-500"
+                    >
+                        <option value="disc">圓盤</option>
+                        <option value="vertical">垂直</option>
+                    </select>
+                </div>
+                <div className="flex items-center gap-2 text-white">
                     <label htmlFor="font-size" className="text-xs">大小</label>
                     <input
                         id="font-size"
@@ -591,6 +691,19 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                     >
                         {fontOptions.map(opt => (
                             <option key={opt.value} value={opt.value} style={{ fontFamily: opt.value }}>{opt.name}</option>
+                        ))}
+                    </select>
+                </div>
+                <div className="flex items-center gap-2 text-white">
+                    <label htmlFor="color-theme" className="text-xs">主題</label>
+                    <select
+                        id="color-theme"
+                        value={colorTheme}
+                        onChange={(e) => setColorTheme(e.target.value)}
+                        className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-500"
+                    >
+                        {Object.entries(colorThemes).map(([key, theme]) => (
+                            <option key={key} value={key}>{theme.name}</option>
                         ))}
                     </select>
                 </div>
