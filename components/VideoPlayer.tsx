@@ -4,6 +4,7 @@ import PlayIcon from './icons/PlayIcon';
 import PauseIcon from './icons/PauseIcon';
 import PrevIcon from './icons/PrevIcon';
 import Loader from './Loader';
+import MusicIcon from './icons/MusicIcon';
 
 interface VideoPlayerProps {
   timedLyrics: TimedLyric[];
@@ -323,7 +324,20 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
 
     try {
       setExportProgress({ message: '正在載入資源...', progress: 5 });
-      const [bgImage, albumImage] = await Promise.all([loadImage(imageUrl), loadImage(imageUrl)]);
+      
+      const svgString = `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="white">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 9l10.5-3m0 6.553v3.75a2.25 2.25 0 01-1.632 2.163l-1.32.377a1.803 1.803 0 11-.99-3.467l2.31-.66a2.25 2.25 0 001.632-2.163zm0 0V7.5A2.25 2.25 0 0013.5 5.25h-3A2.25 2.25 0 008.25 7.5v3.75c0 .621.504 1.125 1.125 1.125h3.75c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H9.75" />
+      </svg>`;
+      const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+      const signatureUrl = URL.createObjectURL(svgBlob);
+
+      const [bgImage, albumImage, signatureImage] = await Promise.all([
+        loadImage(imageUrl), 
+        loadImage(imageUrl),
+        loadImage(signatureUrl),
+      ]);
+      URL.revokeObjectURL(signatureUrl);
+
       setExportProgress({ message: '資源載入完畢', progress: 10 });
       
       const audio = audioRef.current;
@@ -559,14 +573,17 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         // --- Draw Watermark ---
         ctx.save();
         const watermarkPadding = 20 * scaleFactor;
-        const watermarkFontSize = 24 * scaleFactor;
-        ctx.font = `italic ${watermarkFontSize}px cursive`; // A generic cursive font
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.5)'; // Semi-transparent white
+        const watermarkSize = 40 * scaleFactor;
+        ctx.globalAlpha = 0.5;
         ctx.shadowColor = 'rgba(0, 0, 0, 0.7)';
         ctx.shadowBlur = 4 * scaleFactor;
-        ctx.textAlign = 'right';
-        ctx.textBaseline = 'bottom';
-        ctx.fillText('浮水映', canvas.width - watermarkPadding, canvas.height - watermarkPadding);
+        ctx.drawImage(
+            signatureImage, 
+            canvas.width - watermarkPadding - watermarkSize, 
+            canvas.height - watermarkPadding - watermarkSize, 
+            watermarkSize, 
+            watermarkSize
+        );
         ctx.restore();
 
         // --- End Drawing ---
@@ -595,10 +612,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
           <img src={imageUrl} alt="背景" className="absolute inset-0 w-full h-full object-cover z-0 filter blur-xl scale-110" />
           <div className="absolute inset-0 bg-black/40" />
           <div 
-            className="absolute bottom-4 right-6 z-20 text-white text-opacity-50 font-[cursive] text-2xl select-none pointer-events-none" 
-            style={{ textShadow: '1px 1px 3px rgba(0,0,0,0.7)' }}
+            className="absolute bottom-4 right-6 z-20 text-white text-opacity-50 select-none pointer-events-none"
           >
-            浮水映
+            <MusicIcon className="w-10 h-10" style={{ filter: 'drop-shadow(1px 1px 3px rgba(0,0,0,0.7))' }} />
           </div>
           
            <div className="relative z-10 w-full h-full flex p-4 sm:p-8 items-center">
@@ -651,7 +667,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
           <div className="flex items-center justify-between mt-4 flex-wrap gap-2">
               <button onClick={onBack} className="flex items-center gap-2 text-gray-300 hover:text-white transition-colors text-sm sm:text-base">
                   <PrevIcon className="w-6 h-6" />
-                  返回編輯
+                  返回
               </button>
               <button onClick={handlePlayPause} className="bg-white text-gray-900 rounded-full p-3 transform hover:scale-110 transition-transform">
                   {isPlaying ? <PauseIcon className="w-6 h-6" /> : <PlayIcon className="w-6 h-6" />}

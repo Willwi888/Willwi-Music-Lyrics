@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import LyricsTiming from './components/LyricsTiming';
 import VideoPlayer from './components/VideoPlayer';
 import MusicIcon from './components/icons/MusicIcon';
@@ -11,6 +11,46 @@ type AppState = 'FORM' | 'TIMING' | 'PREVIEW';
 
 const DEFAULT_BG_IMAGE = 'https://storage.googleapis.com/aistudio-hosting/workspace-template-assets/lyric-video-maker/default_bg.jpg';
 
+// Helper function to convert SRT time format (HH:MM:SS,ms) to seconds
+const srtTimeToSeconds = (time: string): number => {
+  const parts = time.split(/[:,]/);
+  const hours = parseInt(parts[0], 10);
+  const minutes = parseInt(parts[1], 10);
+  const seconds = parseInt(parts[2], 10);
+  const milliseconds = parseInt(parts[3], 10);
+  return hours * 3600 + minutes * 60 + seconds + milliseconds / 1000;
+};
+
+// New parser for SRT content that extracts timing information
+const parseSrtWithTimestamps = (srtContent: string): TimedLyric[] => {
+  const blocks = srtContent.trim().replace(/\r/g, '').split('\n\n');
+  const timedLyrics: TimedLyric[] = [];
+
+  for (const block of blocks) {
+    const lines = block.split('\n');
+    if (lines.length < 3) continue;
+
+    const timeLine = lines[1];
+    if (timeLine && timeLine.includes('-->')) {
+      try {
+        const [startTimeStr, endTimeStr] = timeLine.split(' --> ');
+        const text = lines.slice(2).join('\n');
+        
+        timedLyrics.push({
+          text,
+          startTime: srtTimeToSeconds(startTimeStr),
+          endTime: srtTimeToSeconds(endTimeStr),
+        });
+      } catch (error) {
+        console.error("Failed to parse SRT time block:", block, error);
+        // Skip malformed blocks
+      }
+    }
+  }
+  return timedLyrics;
+};
+
+
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>('FORM');
   const [lyricsText, setLyricsText] = useState('');
@@ -20,6 +60,7 @@ const App: React.FC = () => {
   const [backgroundImage, setBackgroundImage] = useState<File | null>(null);
   const [timedLyrics, setTimedLyrics] = useState<TimedLyric[]>([]);
   const [isMounted, setIsMounted] = useState(false);
+  const srtInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setIsMounted(true);
@@ -32,7 +73,12 @@ const App: React.FC = () => {
   const handleStartTiming = (e: React.FormEvent) => {
     e.preventDefault();
     if (lyricsText && audioFile && songTitle && artistName) {
-      setAppState('TIMING');
+      // If timed lyrics are already populated (from SRT import), skip to preview
+      if (timedLyrics.length > 0) {
+        setAppState('PREVIEW');
+      } else {
+        setAppState('TIMING');
+      }
     } else {
       alert('請填寫所有必填欄位！');
     }
@@ -50,6 +96,65 @@ const App: React.FC = () => {
   const handleBackToTiming = useCallback(() => {
     setAppState('TIMING');
   }, []);
+  
+  const handleImportSrtClick = () => {
+    srtInputRef.current?.click();
+  };
+
+  // Legacy parser for text only, used as a fallback.
+  const parseSrtTextOnly = (srtContent: string): string => {
+    const lines = srtContent.replace(/\r/g, '').split('\n');
+    const lyricLines = lines.filter(line => {
+      const trimmed = line.trim();
+      if (trimmed === '') return false;
+      if (/^\d+$/.test(trimmed)) return false; // sequence number
+      if (trimmed.includes('-->')) return false; // timestamp
+      return true;
+    });
+    return lyricLines.join('\n');
+  };
+
+  const handleSrtFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const srtContent = event.target?.result as string;
+      if (srtContent) {
+        const parsedTimedLyrics = parseSrtWithTimestamps(srtContent);
+        // Check if the parser successfully extracted timed lyrics
+        if (parsedTimedLyrics.length > 0) {
+          setTimedLyrics(parsedTimedLyrics);
+          const plainLyrics = parsedTimedLyrics.map(l => l.text).join('\n');
+          setLyricsText(plainLyrics);
+          alert('SRT 檔案已成功匯入並對時！請點擊「開始對時」按鈕直接進入預覽。');
+        } else {
+           // Fallback to old behavior if SRT has no valid timing info
+          const parsedLyrics = parseSrtTextOnly(srtContent);
+          setLyricsText(parsedLyrics);
+          setTimedLyrics([]); // Ensure timed lyrics are cleared
+        }
+      }
+    };
+    reader.onerror = () => {
+      alert('讀取 SRT 檔案時發生錯誤。');
+    };
+    reader.readAsText(file);
+    
+    // Reset input value to allow re-uploading the same file
+    if(e.target) e.target.value = ''; 
+  };
+  
+  const handleLyricsTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setLyricsText(e.target.value);
+    // If the user manually edits the lyrics, the imported timings are no longer valid.
+    // Clear them to ensure the user goes to the manual timing screen.
+    if (timedLyrics.length > 0) {
+      setTimedLyrics([]);
+    }
+  };
+
 
   const renderContent = () => {
     switch (appState) {
@@ -69,7 +174,7 @@ const App: React.FC = () => {
             timedLyrics={timedLyrics}
             audioUrl={audioUrl}
             imageUrl={backgroundImageUrl}
-            onBack={handleBackToTiming}
+            onBack={timedLyrics.length > 0 ? handleBackToForm : handleBackToTiming}
             songTitle={songTitle}
             artistName={artistName}
           />
@@ -123,14 +228,28 @@ const App: React.FC = () => {
                     <label htmlFor="lyrics" className="block text-sm font-medium text-gray-300">
                         歌詞
                     </label>
+                    <button
+                      type="button"
+                      onClick={handleImportSrtClick}
+                      className="text-xs font-medium text-gray-400 hover:text-white hover:underline focus:outline-none focus:ring-2 focus:ring-gray-500 rounded"
+                    >
+                      匯入 SRT
+                    </button>
                  </div>
+                <input
+                  type="file"
+                  ref={srtInputRef}
+                  onChange={handleSrtFileChange}
+                  accept=".srt"
+                  className="sr-only"
+                />
                 <textarea
                   id="lyrics"
                   rows={8}
                   className="block w-full px-3 py-2 bg-gray-900/50 border border-gray-600 rounded-md shadow-sm placeholder-gray-500 focus:outline-none focus:ring-gray-500 focus:border-gray-500 sm:text-sm text-white"
                   placeholder="請在此貼上您的歌詞..."
                   value={lyricsText}
-                  onChange={(e) => setLyricsText(e.target.value)}
+                  onChange={handleLyricsTextChange}
                   required
                 />
               </div>
@@ -179,7 +298,7 @@ const App: React.FC = () => {
                   disabled={!lyricsText || !audioFile || !songTitle || !artistName}
                   className="w-full flex justify-center py-3 px-4 border border-white/50 rounded-md shadow-sm text-sm font-bold text-gray-900 bg-[#a6a6a6] hover:bg-[#999999] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-gray-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                 >
-                  開始對時
+                  {timedLyrics.length > 0 ? '完成並預覽' : '開始對時'}
                 </button>
               </div>
             </form>
