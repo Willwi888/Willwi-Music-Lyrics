@@ -28,6 +28,7 @@ const App: React.FC = () => {
   const audioUrl = audioFile ? URL.createObjectURL(audioFile) : '';
   const backgroundImageUrl = backgroundImage ? URL.createObjectURL(backgroundImage) : DEFAULT_BG_IMAGE;
 
+
   const handleStartTiming = (e: React.FormEvent) => {
     e.preventDefault();
     if (lyricsText && audioFile && songTitle && artistName) {
@@ -118,14 +119,16 @@ const App: React.FC = () => {
                 </div>
               </div>
               <div>
-                <label htmlFor="lyrics" className="block text-sm font-medium text-gray-300 mb-2">
-                  歌詞
-                </label>
+                 <div className="flex justify-between items-center mb-2">
+                    <label htmlFor="lyrics" className="block text-sm font-medium text-gray-300">
+                        歌詞
+                    </label>
+                 </div>
                 <textarea
                   id="lyrics"
                   rows={8}
                   className="block w-full px-3 py-2 bg-gray-900/50 border border-gray-600 rounded-md shadow-sm placeholder-gray-500 focus:outline-none focus:ring-gray-500 focus:border-gray-500 sm:text-sm text-white"
-                  placeholder="請在此貼上您的歌詞，一行一句..."
+                  placeholder="請在此貼上您的歌詞..."
                   value={lyricsText}
                   onChange={(e) => setLyricsText(e.target.value)}
                   required
