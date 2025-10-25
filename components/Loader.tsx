@@ -15,7 +15,7 @@ const Loader: React.FC<LoaderProps> = ({ message, progress, onCancel }) => {
         <div className="mb-4 text-lg font-semibold">{message}</div>
         <div className="w-full bg-gray-700 rounded-full h-2.5 overflow-hidden">
           <div 
-            className={`bg-purple-600 h-2.5 rounded-full transition-all duration-300 ease-in-out ${isIndeterminate ? 'animate-pulse' : ''}`}
+            className={`bg-[#a6a6a6] h-2.5 rounded-full transition-all duration-300 ease-in-out ${isIndeterminate ? 'animate-pulse' : ''}`}
             style={{ width: isIndeterminate ? '100%' : `${progress}%` }}
           ></div>
         </div>

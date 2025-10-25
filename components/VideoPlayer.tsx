@@ -33,6 +33,26 @@ const fontOptions = [
   { name: '打字機', value: 'monospace' },
 ];
 
+const fontConfig = {
+  'sans-serif': { 
+    name: 'Noto Sans TC', 
+    url: 'https://storage.googleapis.com/aistudio-hosting/fonts/NotoSansTC-Regular.otf' 
+  },
+  'serif': { 
+    name: 'Noto Serif TC', 
+    url: 'https://storage.googleapis.com/aistudio-hosting/fonts/NotoSerifTC-Regular.otf' 
+  },
+  'cursive': { 
+    name: 'Ma Shan Zheng', 
+    url: 'https://storage.googleapis.com/aistudio-hosting/fonts/MaShanZheng-Regular.ttf' 
+  },
+  'monospace': { 
+    name: 'Noto Sans Mono', 
+    url: 'https://storage.googleapis.com/aistudio-hosting/fonts/NotoSansMono-Regular.ttf'
+  },
+};
+
+
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageUrl, onBack }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -152,9 +172,14 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
 
         await ffmpeg.load();
         if (isExportCancelled.current) return;
+        
+        const selectedFont = fontConfig[fontFamily as keyof typeof fontConfig] || fontConfig['sans-serif'];
+        const FONT_URL = selectedFont.url;
+        const FONT_NAME = selectedFont.name;
+        const FONT_FILENAME = FONT_URL.split('/').pop() || 'font.file';
 
         setExportProgress({ message: '正在準備資源...', progress: 10 });
-        const FONT_URL = 'https://storage.googleapis.com/aistudio-hosting/fonts/NotoSansTC-Regular.otf';
+
         const [image, audio, font] = await Promise.all([
             fetchFile(imageUrl),
             fetchFile(audioUrl),
@@ -163,7 +188,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
 
         ffmpeg.FS('writeFile', 'image.jpg', image);
         ffmpeg.FS('writeFile', 'audio.mp3', audio);
-        ffmpeg.FS('writeFile', 'font.otf', font);
+        ffmpeg.FS('writeFile', FONT_FILENAME, font);
         
         const srtContent = generateSrtContent();
         ffmpeg.FS('writeFile', 'lyrics.srt', srtContent);
@@ -174,7 +199,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         
         const scaledFontSize = Math.round(fontSize * 0.75); // Scale font size for video
         
-        const subtitlesFilter = `subtitles=lyrics.srt:force_style='FontName=Noto Sans TC,FontSize=${scaledFontSize},PrimaryColour=&HFFFFFF,OutlineColour=&H000000,BorderStyle=1,Outline=1,Shadow=1,MarginV=50'`;
+        const subtitlesFilter = `subtitles=lyrics.srt:fontsdir=./:force_style='FontName=${FONT_NAME},FontSize=${scaledFontSize},PrimaryColour=&HFFFFFF,OutlineColour=&H000000,BorderStyle=1,Outline=1,Shadow=1,MarginV=50'`;
         const vf = `scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:-1:-1:color=black,${subtitlesFilter}`;
         
         ffmpeg.setProgress(({ ratio }) => {
@@ -228,40 +253,41 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   return (
     <>
       {exportProgress && <Loader message={exportProgress.message} progress={exportProgress.progress} onCancel={handleCancelExport} />}
-      <div className="w-full max-w-6xl mx-auto">
+      <div className="w-full max-w-5xl mx-auto">
         <audio ref={audioRef} src={audioUrl} onLoadedMetadata={() => setCurrentTime(0)} />
         
-        <div className="flex flex-col md:flex-row gap-8 items-center py-8 px-4">
-            {/* Left Column: Album Art */}
-            <div className="w-full md:w-2/5 flex-shrink-0">
-                <img src={imageUrl} alt="專輯封面" className="w-full aspect-square object-cover rounded-xl shadow-2xl ring-1 ring-white/10"/>
+        {/* Video Preview Area */}
+        <div className="w-full aspect-video bg-gray-900 rounded-xl shadow-2xl ring-1 ring-white/10 relative overflow-hidden mb-4">
+          <img src={imageUrl} alt="專輯封面" className="absolute inset-0 w-full h-full object-cover z-0 filter blur-sm" />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
+          
+          <div className="absolute inset-0 flex flex-col items-center justify-end p-4 sm:p-8 text-white">
+            <div className="w-full max-w-4xl text-center">
+              <div 
+                className="min-h-[6rem] md:min-h-[8rem] flex items-center justify-center bg-black/30 backdrop-blur-md p-4 rounded-lg"
+              >
+                {currentLyric ? (
+                  <KaraokeLyric
+                    key={currentLyric.startTime}
+                    text={currentLyric.text}
+                    startTime={currentLyric.startTime}
+                    endTime={currentLyric.endTime}
+                    currentTime={currentTime}
+                    isPlaying={isPlaying}
+                    style={{
+                      fontSize: `${fontSize}px`,
+                      fontFamily: fontFamily,
+                    }}
+                  />
+                ) : (
+                  <p className="text-gray-400" style={{ fontSize: `${fontSize}px`, fontFamily: fontFamily, }}>...</p>
+                )}
+              </div>
             </div>
-
-            {/* Right Column: Lyrics */}
-            <div className="w-full md:w-3/5 h-48 flex items-center justify-center">
-                <div className="w-full text-center text-white">
-                    <div className="h-24 flex items-center justify-center">
-                      {currentLyric ? (
-                          <KaraokeLyric
-                              key={currentLyric.startTime}
-                              text={currentLyric.text}
-                              startTime={currentLyric.startTime}
-                              endTime={currentLyric.endTime}
-                              currentTime={currentTime}
-                              isPlaying={isPlaying}
-                              style={{
-                                fontSize: `${fontSize}px`,
-                                fontFamily: fontFamily,
-                              }}
-                           />
-                      ) : (
-                          <p className="text-gray-600" style={{ fontSize: `${fontSize}px`, fontFamily: fontFamily, }}>...</p>
-                      )}
-                    </div>
-                </div>
-            </div>
+          </div>
         </div>
 
+        {/* Controls Area */}
         <div className="p-4 bg-gray-800/50 backdrop-blur-sm rounded-lg border border-gray-700">
           <div className="w-full flex items-center gap-4">
             <span className="text-white text-sm font-mono">{formatTime(currentTime)}</span>
@@ -271,7 +297,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
               max={durationValue}
               value={currentTime}
               onChange={handleTimelineChange}
-              className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-pink-500"
+              className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-[#a6a6a6]"
             />
             <span className="text-white text-sm font-mono">{formatTime(durationValue)}</span>
           </div>
@@ -293,7 +319,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                         max="80"
                         value={fontSize}
                         onChange={(e) => setFontSize(Number(e.target.value))}
-                        className="w-20 h-1.5 bg-white/30 rounded-full appearance-none cursor-pointer accent-pink-500"
+                        className="w-20 h-1.5 bg-white/30 rounded-full appearance-none cursor-pointer accent-[#a6a6a6]"
                     />
                 </div>
                 <div className="flex items-center gap-2 text-white">
@@ -302,20 +328,23 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                         id="font-family"
                         value={fontFamily}
                         onChange={(e) => setFontFamily(e.target.value)}
-                        className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500"
+                        className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-500"
                     >
                         {fontOptions.map(opt => (
                             <option key={opt.value} value={opt.value} style={{ fontFamily: opt.value }}>{opt.name}</option>
                         ))}
                     </select>
                 </div>
-                <button onClick={handleExportSrt} className="px-3 py-2 text-sm bg-purple-600 text-white font-semibold rounded-lg hover:bg-purple-700 transition">
+                <button onClick={handleExportSrt} className="px-3 py-2 text-sm bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-500 transition">
                     導出 SRT
                 </button>
-                <button onClick={handleExportMp4} className="px-3 py-2 text-sm bg-pink-600 text-white font-semibold rounded-lg hover:bg-pink-700 transition">
+                <button onClick={handleExportMp4} className="px-3 py-2 text-sm bg-[#a6a6a6] text-gray-900 font-semibold rounded-lg hover:bg-[#999999] border border-white/50 transition">
                     導出 MP4
                 </button>
               </div>
+          </div>
+          <div className="mt-3 text-center">
+            <p className="text-xs text-gray-500">注意：影片匯出在您的瀏覽器中進行，過程可能需要數分鐘且消耗大量資源。建議使用電腦操作，並避免匯出過長的影片。</p>
           </div>
         </div>
 

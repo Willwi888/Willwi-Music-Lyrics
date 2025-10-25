@@ -16,17 +16,17 @@ const KaraokeLyric: React.FC<KaraokeLyricProps> = ({ text, startTime, endTime, c
 
   const animationStyle: React.CSSProperties = {
     ...style,
+    opacity: 0, // Start with opacity 0 for fade-in animation to take effect
     backgroundImage: `linear-gradient(to right, #FFFFFF 50%, #9ca3af 50%)`,
     backgroundSize: '200% 100%',
     backgroundPosition: '100%',
     WebkitBackgroundClip: 'text',
     backgroundClip: 'text',
     color: 'transparent',
-    animationName: 'karaoke-highlight',
-    animationDuration: `${Math.max(0, duration)}ms`, // Ensure duration isn't negative
-    animationDelay: `${delay}ms`,
-    animationTimingFunction: 'linear',
-    animationFillMode: 'forwards',
+    animation: `
+      karaoke-highlight ${Math.max(0, duration)}ms linear ${delay}ms forwards,
+      karaoke-fade-in 400ms ease-out ${delay}ms forwards
+    `,
     animationPlayState: isPlaying ? 'running' : 'paused',
   };
 
@@ -37,6 +37,10 @@ const KaraokeLyric: React.FC<KaraokeLyricProps> = ({ text, startTime, endTime, c
           @keyframes karaoke-highlight {
             from { background-position: 100%; }
             to { background-position: 0%; }
+          }
+          @keyframes karaoke-fade-in {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
           }
         `}
       </style>

@@ -74,7 +74,7 @@ const App: React.FC = () => {
         return (
           <div className="w-full max-w-lg p-8 space-y-6 bg-gray-800/50 backdrop-blur-sm rounded-xl shadow-2xl border border-gray-700">
             <div className="text-center">
-              <MusicIcon className="w-12 h-12 mx-auto text-purple-400" />
+              <MusicIcon className="w-12 h-12 mx-auto text-gray-400" />
               <h2 className="mt-4 text-3xl font-bold tracking-tight text-white">
                 歌詞影片創作工具
               </h2>
@@ -90,7 +90,7 @@ const App: React.FC = () => {
                 <textarea
                   id="lyrics"
                   rows={8}
-                  className="block w-full px-3 py-2 bg-gray-900/50 border border-gray-600 rounded-md shadow-sm placeholder-gray-500 focus:outline-none focus:ring-purple-500 focus:border-purple-500 sm:text-sm text-white"
+                  className="block w-full px-3 py-2 bg-gray-900/50 border border-gray-600 rounded-md shadow-sm placeholder-gray-500 focus:outline-none focus:ring-gray-500 focus:border-gray-500 sm:text-sm text-white"
                   placeholder="請在此貼上您的歌詞，一行一句..."
                   value={lyricsText}
                   onChange={(e) => setLyricsText(e.target.value)}
@@ -106,7 +106,7 @@ const App: React.FC = () => {
                   <div className="space-y-1 text-center">
                     <MusicIcon className="mx-auto h-12 w-12 text-gray-500" />
                     <div className="flex text-sm text-gray-400">
-                      <label htmlFor="audio-upload" className="relative cursor-pointer bg-gray-800 rounded-md font-medium text-purple-400 hover:text-purple-300 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-offset-gray-900 focus-within:ring-purple-500">
+                      <label htmlFor="audio-upload" className="relative cursor-pointer bg-gray-800 rounded-md font-medium text-gray-400 hover:text-gray-300 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-offset-gray-900 focus-within:ring-gray-500">
                         <span>上傳檔案</span>
                         <input id="audio-upload" name="audio-upload" type="file" className="sr-only" accept="audio/*" onChange={(e) => setAudioFile(e.target.files?.[0] || null)} required />
                       </label>
@@ -125,7 +125,7 @@ const App: React.FC = () => {
                   <div className="space-y-1 text-center">
                     <ImageIcon className="mx-auto h-12 w-12 text-gray-500" />
                     <div className="flex text-sm text-gray-400">
-                      <label htmlFor="image-upload" className="relative cursor-pointer bg-gray-800 rounded-md font-medium text-purple-400 hover:text-purple-300 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-offset-gray-900 focus-within:ring-purple-500">
+                      <label htmlFor="image-upload" className="relative cursor-pointer bg-gray-800 rounded-md font-medium text-gray-400 hover:text-gray-300 focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-2 focus-within:ring-offset-gray-900 focus-within:ring-gray-500">
                         <span>選擇圖片</span>
                         <input id="image-upload" name="image-upload" type="file" className="sr-only" accept="image/*" onChange={(e) => setBackgroundImage(e.target.files?.[0] || null)} />
                       </label>
@@ -140,12 +140,16 @@ const App: React.FC = () => {
                 <button
                   type="submit"
                   disabled={!lyricsText || !audioFile}
-                  className="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-bold text-white bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-purple-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                  className="w-full flex justify-center py-3 px-4 border border-white/50 rounded-md shadow-sm text-sm font-bold text-gray-900 bg-[#a6a6a6] hover:bg-[#999999] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-gray-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                 >
                   開始對時
                 </button>
               </div>
             </form>
+            <div className="mt-6 pt-4 border-t border-gray-700 text-center text-xs text-gray-500">
+              <h4 className="font-semibold text-gray-400 mb-1">行動裝置使用建議</h4>
+              <p>建議使用電腦以獲得最佳體驗，特別是影片匯出功能。若使用手機，建議橫向操作以便對時。</p>
+            </div>
           </div>
         );
     }
