@@ -14,6 +14,8 @@ const DEFAULT_BG_IMAGE = 'https://storage.googleapis.com/aistudio-hosting/worksp
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>('FORM');
   const [lyricsText, setLyricsText] = useState('');
+  const [songTitle, setSongTitle] = useState('');
+  const [artistName, setArtistName] = useState('');
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [backgroundImage, setBackgroundImage] = useState<File | null>(null);
   const [timedLyrics, setTimedLyrics] = useState<TimedLyric[]>([]);
@@ -28,10 +30,10 @@ const App: React.FC = () => {
 
   const handleStartTiming = (e: React.FormEvent) => {
     e.preventDefault();
-    if (lyricsText && audioFile) {
+    if (lyricsText && audioFile && songTitle && artistName) {
       setAppState('TIMING');
     } else {
-      alert('請先貼上歌詞並上傳音訊檔案！');
+      alert('請填寫所有必填欄位！');
     }
   };
 
@@ -67,6 +69,8 @@ const App: React.FC = () => {
             audioUrl={audioUrl}
             imageUrl={backgroundImageUrl}
             onBack={handleBackToTiming}
+            songTitle={songTitle}
+            artistName={artistName}
           />
         );
       case 'FORM':
@@ -83,6 +87,36 @@ const App: React.FC = () => {
               </p>
             </div>
             <form onSubmit={handleStartTiming} className="space-y-6">
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label htmlFor="song-title" className="block text-sm font-medium text-gray-300 mb-2">
+                    歌曲名稱
+                  </label>
+                  <input
+                    type="text"
+                    id="song-title"
+                    className="block w-full px-3 py-2 bg-gray-900/50 border border-gray-600 rounded-md shadow-sm placeholder-gray-500 focus:outline-none focus:ring-gray-500 focus:border-gray-500 sm:text-sm text-white"
+                    placeholder="請輸入歌曲名稱"
+                    value={songTitle}
+                    onChange={(e) => setSongTitle(e.target.value)}
+                    required
+                  />
+                </div>
+                <div>
+                  <label htmlFor="artist-name" className="block text-sm font-medium text-gray-300 mb-2">
+                    歌手名稱
+                  </label>
+                  <input
+                    type="text"
+                    id="artist-name"
+                    className="block w-full px-3 py-2 bg-gray-900/50 border border-gray-600 rounded-md shadow-sm placeholder-gray-500 focus:outline-none focus:ring-gray-500 focus:border-gray-500 sm:text-sm text-white"
+                    placeholder="請輸入歌手名稱"
+                    value={artistName}
+                    onChange={(e) => setArtistName(e.target.value)}
+                    required
+                  />
+                </div>
+              </div>
               <div>
                 <label htmlFor="lyrics" className="block text-sm font-medium text-gray-300 mb-2">
                   歌詞
@@ -119,7 +153,7 @@ const App: React.FC = () => {
 
               <div>
                 <label htmlFor="image-upload" className="block text-sm font-medium text-gray-300 mb-2">
-                  背景圖片 (可選)
+                  專輯/背景圖片 (可選)
                 </label>
                 <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-gray-600 border-dashed rounded-md">
                   <div className="space-y-1 text-center">
@@ -139,7 +173,7 @@ const App: React.FC = () => {
               <div>
                 <button
                   type="submit"
-                  disabled={!lyricsText || !audioFile}
+                  disabled={!lyricsText || !audioFile || !songTitle || !artistName}
                   className="w-full flex justify-center py-3 px-4 border border-white/50 rounded-md shadow-sm text-sm font-bold text-gray-900 bg-[#a6a6a6] hover:bg-[#999999] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-gray-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                 >
                   開始對時

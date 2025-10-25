@@ -4,7 +4,6 @@ import PlayIcon from './icons/PlayIcon';
 import PauseIcon from './icons/PauseIcon';
 import PrevIcon from './icons/PrevIcon';
 import Loader from './Loader';
-import KaraokeLyric from './KaraokeLyric';
 
 // Allows access to the FFmpeg library loaded from the script tag in index.html
 declare global {
@@ -17,6 +16,8 @@ interface VideoPlayerProps {
   timedLyrics: TimedLyric[];
   audioUrl: string;
   imageUrl: string;
+  songTitle: string;
+  artistName: string;
   onBack: () => void;
 }
 
@@ -53,7 +54,7 @@ const fontConfig = {
 };
 
 
-const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageUrl, onBack }) => {
+const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageUrl, songTitle, artistName, onBack }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [exportProgress, setExportProgress] = useState<{ message: string; progress: number } | null>(null);
@@ -62,6 +63,22 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   const [fontFamily, setFontFamily] = useState('sans-serif');
   const ffmpegRef = useRef<any>(null);
   const isExportCancelled = useRef(false);
+
+  const lyricsContainerRef = useRef<HTMLDivElement>(null);
+  const lyricRefs = useRef<(HTMLParagraphElement | null)[]>([]);
+
+  const lyricsToRender = useMemo(() => {
+    if (!timedLyrics || timedLyrics.length === 0) return [];
+    const firstStartTime = timedLyrics[0].startTime ?? 0;
+    // Add dummy lyrics at the start and end to allow scrolling to the first and last real lyrics
+    return [
+      { text: '', startTime: -2, endTime: -1 }, 
+      { text: '', startTime: -1, endTime: firstStartTime },
+      ...timedLyrics,
+      { text: '', startTime: 99999, endTime: 999999 },
+      { text: '', startTime: 999999, endTime: 9999999 },
+    ];
+  }, [timedLyrics]);
 
 
   useEffect(() => {
@@ -80,9 +97,20 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     };
   }, []);
   
-  const currentLyric = useMemo(() => {
-    return timedLyrics.find(lyric => currentTime >= lyric.startTime && currentTime < lyric.endTime) || null;
+  const currentIndex = useMemo(() => {
+    // We offset by 2 because of the dummy lyrics at the start
+    return timedLyrics.findIndex(lyric => currentTime >= lyric.startTime && currentTime < lyric.endTime) + 2;
   }, [currentTime, timedLyrics]);
+
+  useEffect(() => {
+    if (currentIndex !== -1 && lyricsContainerRef.current && lyricRefs.current[currentIndex]) {
+        const container = lyricsContainerRef.current;
+        const activeLyricElement = lyricRefs.current[currentIndex]!;
+        const newTransform = `translateY(${container.offsetHeight / 2 - activeLyricElement.offsetTop - activeLyricElement.offsetHeight / 2}px)`;
+        container.style.transform = newTransform;
+    }
+  }, [currentIndex, fontSize]);
+
 
   const handlePlayPause = () => {
     if (audioRef.current) {
@@ -144,7 +172,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     isExportCancelled.current = true;
     if (ffmpegRef.current) {
       try {
-        // This is the correct way to stop the process for this version
         ffmpegRef.current.exit();
       } catch (e) {
         console.warn('Could not terminate FFmpeg process.', e);
@@ -165,7 +192,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         const { createFFmpeg } = window.FFmpeg;
         const ffmpeg = createFFmpeg({
             log: true,
-            // Use the single-threaded core to avoid SharedArrayBuffer issues.
             corePath: 'https://unpkg.com/@ffmpeg/core-st@0.11.0/dist/ffmpeg-core.js',
         });
         ffmpegRef.current = ffmpeg;
@@ -250,6 +276,34 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   
   const durationValue = audioRef.current?.duration || 0;
 
+  const getLyricStyle = (index: number) => {
+    const style: React.CSSProperties = {
+        transition: 'transform 0.5s ease-out, opacity 0.5s ease-out, font-size 0.5s ease-out',
+        fontFamily: fontFamily,
+        fontWeight: 500,
+        textShadow: '2px 2px 5px rgba(0,0,0,0.5)',
+    };
+
+    if (index === currentIndex) {
+        style.opacity = 1;
+        style.transform = 'scale(1)';
+        style.fontSize = `${fontSize}px`;
+        style.color = '#FFFFFF';
+        style.fontWeight = 700;
+    } else if (index === currentIndex - 1 || index === currentIndex + 1) {
+        style.opacity = 0.6;
+        style.transform = 'scale(0.9)';
+        style.fontSize = `${fontSize * 0.7}px`;
+        style.color = '#E5E7EB'; // text-gray-200
+    } else {
+        style.opacity = 0;
+        style.transform = 'scale(0.8)';
+        style.fontSize = `${fontSize * 0.6}px`;
+        style.color = '#D1D5DB'; // text-gray-300
+    }
+    return style;
+  }
+
   return (
     <>
       {exportProgress && <Loader message={exportProgress.message} progress={exportProgress.progress} onCancel={handleCancelExport} />}
@@ -258,33 +312,38 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         
         {/* Video Preview Area */}
         <div className="w-full aspect-video bg-gray-900 rounded-xl shadow-2xl ring-1 ring-white/10 relative overflow-hidden mb-4">
-          <img src={imageUrl} alt="專輯封面" className="absolute inset-0 w-full h-full object-cover z-0 filter blur-sm" />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
+          <img src={imageUrl} alt="背景" className="absolute inset-0 w-full h-full object-cover z-0 filter blur-xl scale-110" />
+          <div className="absolute inset-0 bg-black/40" />
           
-          <div className="absolute inset-0 flex flex-col items-center justify-end p-4 sm:p-8 text-white">
-            <div className="w-full max-w-4xl text-center">
-              <div 
-                className="min-h-[6rem] md:min-h-[8rem] flex items-center justify-center bg-black/30 backdrop-blur-md p-4 rounded-lg"
-              >
-                {currentLyric ? (
-                  <KaraokeLyric
-                    key={currentLyric.startTime}
-                    text={currentLyric.text}
-                    startTime={currentLyric.startTime}
-                    endTime={currentLyric.endTime}
-                    currentTime={currentTime}
-                    isPlaying={isPlaying}
-                    style={{
-                      fontSize: `${fontSize}px`,
-                      fontFamily: fontFamily,
-                    }}
-                  />
-                ) : (
-                  <p className="text-gray-400" style={{ fontSize: `${fontSize}px`, fontFamily: fontFamily, }}>...</p>
-                )}
+           <div className="relative z-10 w-full h-full flex p-4 sm:p-8 items-center">
+              {/* Left Column: Lyrics */}
+              <div className="w-3/5 h-full flex flex-col justify-center items-start overflow-hidden">
+                <div 
+                    ref={lyricsContainerRef} 
+                    className="w-full transition-transform duration-500 ease-in-out"
+                >
+                    {lyricsToRender.map((lyric, index) => (
+                        <p
+                            key={index}
+                            ref={el => { lyricRefs.current[index] = el; }}
+                            className={`w-full p-2 tracking-wide leading-tight`}
+                            style={getLyricStyle(index)}
+                        >
+                            {lyric.text || '\u00A0' /* Non-breaking space for empty/dummy lines */}
+                        </p>
+                    ))}
+                </div>
+              </div>
+
+              {/* Right Column: Album Art & Info */}
+              <div className="w-2/5 h-full flex flex-col justify-center items-center pl-4">
+                <img src={imageUrl} alt="專輯封面" className="w-full max-w-[280px] aspect-square object-cover rounded-xl shadow-2xl ring-1 ring-white/10" />
+                <div className="text-center mt-4 p-2 text-white w-full max-w-[280px]">
+                    <p className="font-bold text-lg truncate" title={songTitle}>{songTitle}</p>
+                    <p className="text-gray-300 truncate" title={artistName}>{artistName}</p>
+                </div>
               </div>
             </div>
-          </div>
         </div>
 
         {/* Controls Area */}
@@ -347,14 +406,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
             <p className="text-xs text-gray-500">注意：影片匯出在您的瀏覽器中進行，過程可能需要數分鐘且消耗大量資源。建議使用電腦操作，並避免匯出過長的影片。</p>
           </div>
         </div>
-
-        <style>{`
-          @keyframes fade-in-up {
-            0% { opacity: 0; transform: translateY(20px); }
-            100% { opacity: 1; transform: translateY(0); }
-          }
-          .animate-fade-in-up { animation: fade-in-up 0.5s ease-out forwards; }
-        `}</style>
       </div>
     </>
   );
