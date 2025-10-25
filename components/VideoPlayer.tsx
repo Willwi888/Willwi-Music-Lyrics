@@ -233,6 +233,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       audio.currentTime = 0;
       audio.play();
       recorder.start();
+      
+      const lyricLineHeight = fontSize * 1.5;
+      const initialTranslateY = canvas.height / 2 - (2 * lyricLineHeight) - lyricLineHeight / 2;
+      let currentCanvasTranslateY = initialTranslateY;
+
 
       const drawFrame = () => {
         const currentPlaybackTime = audio.currentTime;
@@ -293,16 +298,14 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         const lyricIdx = timedLyrics.findIndex(l => currentPlaybackTime >= l.startTime && currentPlaybackTime < l.endTime);
         const canvasCurrentIndex = lyricIdx + 2;
 
-        const lyricLineHeight = fontSize * 1.5;
-        const totalLyricBlockHeight = lyricsToRender.length * lyricLineHeight;
-        
-        const currentLyricOffsetTop = canvasCurrentIndex * lyricLineHeight;
-        const translateY = canvas.height / 2 - currentLyricOffsetTop - lyricLineHeight / 2;
+        const targetTranslateY = canvas.height / 2 - (canvasCurrentIndex * lyricLineHeight) - lyricLineHeight / 2;
+        // Apply easing to smoothly move the lyrics
+        currentCanvasTranslateY += (targetTranslateY - currentCanvasTranslateY) * 0.1;
 
         ctx.save();
         ctx.rect(0, 0, leftColWidth, canvas.height);
         ctx.clip();
-        ctx.translate(0, translateY);
+        ctx.translate(0, currentCanvasTranslateY);
         ctx.textAlign = 'left';
         
         lyricsToRender.forEach((lyric, index) => {
