@@ -29,6 +29,7 @@ const resolutions: { [key: string]: { width: number; height: number } } = {
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageUrl, songTitle, artistName, onBack }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
+  const [isEnded, setIsEnded] = useState(false);
   const [exportProgress, setExportProgress] = useState<{ message: string; progress: number; details?: string } | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [fontSize, setFontSize] = useState(48);
@@ -59,7 +60,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     if (!audio) return;
 
     const timeUpdateHandler = () => setCurrentTime(audio.currentTime);
-    const endedHandler = () => setIsPlaying(false);
+    const endedHandler = () => {
+        setIsPlaying(false);
+        setIsEnded(true);
+    };
 
     audio.addEventListener('timeupdate', timeUpdateHandler);
     audio.addEventListener('ended', endedHandler);
@@ -71,6 +75,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   }, []);
   
   const currentIndex = useMemo(() => {
+    if (isEnded) {
+      return timedLyrics.length + 2;
+    }
+    
     // If playback hasn't started (paused at time 0), point to the dummy lyric before the first real one.
     if (currentTime === 0 && !isPlaying) {
       return 1;
@@ -91,7 +99,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   
     // Otherwise, we're before the first lyric.
     return 1;
-  }, [currentTime, timedLyrics, isPlaying]);
+  }, [currentTime, timedLyrics, isPlaying, isEnded]);
 
 
   useEffect(() => {
@@ -106,12 +114,17 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
 
   const handlePlayPause = () => {
     if (audioRef.current) {
-      if (isPlaying) {
-        audioRef.current.pause();
-      } else {
-        audioRef.current.play();
-      }
-      setIsPlaying(!isPlaying);
+        if (isPlaying) {
+            audioRef.current.pause();
+        } else {
+            if (audioRef.current.ended) {
+                audioRef.current.currentTime = 0;
+                setCurrentTime(0);
+                setIsEnded(false);
+            }
+            audioRef.current.play();
+        }
+        setIsPlaying(!isPlaying);
     }
   };
   
@@ -120,6 +133,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     if (audioRef.current) {
       audioRef.current.currentTime = time;
       setCurrentTime(time);
+      setIsEnded(false);
     }
   };
   
@@ -168,7 +182,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   const getLyricStyle = (index: number, currentIdx?: number, baseFontSize: number = fontSize) => {
     const activeIndex = currentIdx !== undefined ? currentIdx : currentIndex;
     const distance = Math.abs(index - activeIndex);
-    const rotation = (activeIndex - index) * 10; // Positive for past, negative for upcoming (CCW)
+    const rotation = (activeIndex - index) * 10;
 
     const style: { 
         transition: string;
@@ -195,36 +209,38 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     };
     
     let calculatedFontSize: number;
+    let scale: number;
 
     switch (distance) {
       case 0: // Active lyric
         calculatedFontSize = baseFontSize;
+        scale = 1;
         style.opacity = 1;
-        style.transform = `scale(1) rotate(${rotation}deg)`;
         style.color = '#FFFFFF';
         style.fontWeight = 700;
         break;
       case 1: // Immediate neighbors
         calculatedFontSize = baseFontSize * 0.8;
+        scale = 0.95;
         style.opacity = 0.7;
-        style.transform = `scale(0.95) rotate(${rotation}deg)`;
         style.color = '#E5E7EB';
         break;
       case 2: // Further neighbors
         calculatedFontSize = baseFontSize * 0.7;
+        scale = 0.9;
         style.opacity = 0.4;
-        style.transform = `scale(0.9) rotate(${rotation}deg)`;
         style.color = '#D1D5DB';
         break;
       default: // Hidden lyrics
         calculatedFontSize = baseFontSize * 0.6;
+        scale = 0.8;
         style.opacity = 0;
-        style.transform = `scale(0.8) rotate(${rotation}deg)`;
         style.color = '#D1D5DB';
         break;
     }
     
     style.fontSize = `${calculatedFontSize}px`;
+    style.transform = `scale(${scale}) rotate(${rotation}deg)`;
     style.font = `${style.fontWeight} ${calculatedFontSize}px ${style.fontFamily}`;
 
     return style;
@@ -520,7 +536,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
               {/* Album Art Column (Conditional) */}
                {includeAlbumArt && (
                   <div className="w-2/5 h-full flex flex-col justify-center items-center pl-4">
-                    <img src={imageUrl} alt="專輯封面" className="w-full max-w-[280px] aspect-square object-contain bg-black/20 rounded-xl shadow-2xl ring-1 ring-white/10" />
+                    <img src={imageUrl} alt="專輯封面" className="w-full max-w-[280px] aspect-square object-cover bg-black/20 rounded-xl shadow-2xl ring-1 ring-white/10" />
                     <div className="text-center mt-4 p-2 text-white w-full max-w-[280px]">
                         <p className="font-bold text-lg truncate" title={songTitle}>{songTitle}</p>
                         <p className="text-gray-300 truncate" title={artistName}>{artistName}</p>
