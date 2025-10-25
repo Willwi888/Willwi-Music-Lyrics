@@ -21,13 +21,20 @@ const fontOptions = [
   { name: '打字機', value: 'monospace' },
 ];
 
+const resolutions: { [key: string]: { width: number; height: number } } = {
+  '720p': { width: 1280, height: 720 },
+  '1080p': { width: 1920, height: 1080 },
+};
+
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageUrl, songTitle, artistName, onBack }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [exportProgress, setExportProgress] = useState<{ message: string; progress: number } | null>(null);
+  const [exportProgress, setExportProgress] = useState<{ message: string; progress: number; details?: string } | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [fontSize, setFontSize] = useState(48);
   const [fontFamily, setFontFamily] = useState('sans-serif');
+  const [resolution, setResolution] = useState('720p');
+  const [includeAlbumArt, setIncludeAlbumArt] = useState(true);
   const isExportCancelled = useRef(false);
 
   const lyricsContainerRef = useRef<HTMLDivElement>(null);
@@ -86,7 +93,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         const newTransform = `translateY(${container.offsetHeight / 2 - activeLyricElement.offsetTop - activeLyricElement.offsetHeight / 2}px)`;
         container.style.transform = newTransform;
     }
-  }, [currentIndex, fontSize]);
+  }, [currentIndex, fontSize, includeAlbumArt]);
 
 
   const handlePlayPause = () => {
@@ -150,14 +157,79 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     // The recording loop will see this flag and stop itself.
   };
 
+  const getLyricStyle = (index: number, currentIdx?: number, baseFontSize: number = fontSize) => {
+    const activeIndex = currentIdx !== undefined ? currentIdx : currentIndex;
+    const distance = Math.abs(index - activeIndex);
+
+    // This is a style object for React, but we'll extract properties for Canvas too
+    const style: { 
+        transition: string;
+        fontFamily: string;
+        fontWeight: number;
+        textShadow: string;
+        opacity: number;
+        transform: string;
+        fontSize: string;
+        color: string;
+        font: string; // For canvas
+    } = {
+        transition: 'transform 0.5s ease-out, opacity 0.5s ease-out, font-size 0.5s ease-out, color 0.5s ease-out',
+        fontFamily: fontFamily,
+        fontWeight: 500,
+        textShadow: '2px 2px 5px rgba(0,0,0,0.5)',
+        // Default values to be overridden
+        opacity: 0,
+        transform: 'scale(0.8)',
+        fontSize: `${baseFontSize * 0.6}px`,
+        color: '#D1D5DB',
+        font: ''
+    };
+    
+    let calculatedFontSize: number;
+
+    switch (distance) {
+      case 0: // Active lyric
+        calculatedFontSize = baseFontSize;
+        style.opacity = 1;
+        style.transform = 'scale(1)';
+        style.color = '#FFFFFF';
+        style.fontWeight = 700;
+        break;
+      case 1: // Immediate neighbors
+        calculatedFontSize = baseFontSize * 0.8;
+        style.opacity = 0.7;
+        style.transform = 'scale(0.95)';
+        style.color = '#E5E7EB';
+        break;
+      case 2: // Further neighbors
+        calculatedFontSize = baseFontSize * 0.7;
+        style.opacity = 0.4;
+        style.transform = 'scale(0.9)';
+        style.color = '#D1D5DB';
+        break;
+      default: // Hidden lyrics
+        calculatedFontSize = baseFontSize * 0.6;
+        style.opacity = 0;
+        style.transform = 'scale(0.8)';
+        style.color = '#D1D5DB';
+        break;
+    }
+    
+    style.fontSize = `${calculatedFontSize}px`;
+    style.font = `${style.fontWeight} ${calculatedFontSize}px ${style.fontFamily}`;
+
+    return style;
+  }
+
   const handleExportVideo = async () => {
     if (!audioRef.current || !imageUrl) return;
     isExportCancelled.current = false;
     setExportProgress({ message: '正在初始化...', progress: 0 });
 
     const canvas = document.createElement('canvas');
-    canvas.width = 1280;
-    canvas.height = 720;
+    const selectedResolution = resolutions[resolution];
+    canvas.width = selectedResolution.width;
+    canvas.height = selectedResolution.height;
     const ctx = canvas.getContext('2d');
 
     if (!ctx) {
@@ -215,7 +287,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          a.download = `lyric-video.${fileExtension}`;
+          a.download = `${songTitle}-${artistName}-${resolution}.${fileExtension}`;
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
@@ -233,8 +305,12 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       audio.currentTime = 0;
       audio.play();
       recorder.start();
+      const exportStartTime = Date.now();
       
-      const lyricLineHeight = fontSize * 1.5;
+      const scaleFactor = canvas.height / 720;
+      const exportFontSize = fontSize * scaleFactor;
+      const lyricLineHeight = exportFontSize * 1.5;
+      
       const initialTranslateY = canvas.height / 2 - (2 * lyricLineHeight) - lyricLineHeight / 2;
       let currentCanvasTranslateY = initialTranslateY;
 
@@ -254,9 +330,23 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         }
 
         const progress = (currentPlaybackTime / duration) * 100;
+        
+        const elapsedTime = (Date.now() - exportStartTime) / 1000; // in seconds
+        let estimatedTimeRemainingDetails = '';
+        if (progress > 1 && elapsedTime > 1) {
+            const totalTime = elapsedTime / (progress / 100);
+            const remainingTimeSeconds = Math.round(totalTime - elapsedTime);
+            if (remainingTimeSeconds > 0 && isFinite(remainingTimeSeconds)) {
+              const minutes = Math.floor(remainingTimeSeconds / 60);
+              const seconds = remainingTimeSeconds % 60;
+              estimatedTimeRemainingDetails = `預計剩餘 ${minutes}分 ${seconds.toString().padStart(2, '0')}秒`;
+            }
+        }
+
         setExportProgress({ 
-          message: `正在錄製影片... (${formatTime(currentPlaybackTime)} / ${formatTime(duration)})`, 
-          progress 
+          message: `正在錄製影片...`, 
+          progress,
+          details: estimatedTimeRemainingDetails
         });
 
         // --- Start Drawing on Canvas ---
@@ -269,55 +359,83 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
 
         ctx.fillStyle = 'rgba(0,0,0,0.4)';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        const leftColWidth = canvas.width * (3 / 5);
-        const rightColWidth = canvas.width * (2 / 5);
-
-        const albumArtSize = Math.min(280, rightColWidth * 0.8);
-        const albumX = leftColWidth + (rightColWidth - albumArtSize) / 2;
-        const albumY = (canvas.height - albumArtSize) / 2 - 30;
-
-        ctx.save();
-        ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-        ctx.shadowBlur = 20;
-        ctx.shadowOffsetX = 5;
-        ctx.shadowOffsetY = 10;
-        ctx.drawImage(albumImage, albumX, albumY, albumArtSize, albumArtSize);
-        ctx.restore();
-
-        ctx.fillStyle = 'white';
-        ctx.textAlign = 'center';
-        ctx.font = `700 24px ${fontFamily}`;
-        ctx.fillText(songTitle, leftColWidth + rightColWidth / 2, albumY + albumArtSize + 40, rightColWidth * 0.9);
         
-        ctx.fillStyle = '#E5E7EB';
-        ctx.font = `500 20px ${fontFamily}`;
-        ctx.fillText(artistName, leftColWidth + rightColWidth / 2, albumY + albumArtSize + 70, rightColWidth * 0.9);
-
-        // --- Lyrics Drawing ---
         const lyricIdx = timedLyrics.findIndex(l => currentPlaybackTime >= l.startTime && currentPlaybackTime < l.endTime);
         const canvasCurrentIndex = lyricIdx + 2;
 
-        const targetTranslateY = canvas.height / 2 - (canvasCurrentIndex * lyricLineHeight) - lyricLineHeight / 2;
-        // Apply easing to smoothly move the lyrics
-        currentCanvasTranslateY += (targetTranslateY - currentCanvasTranslateY) * 0.1;
+        if (includeAlbumArt) {
+            const leftColWidth = canvas.width * (3 / 5);
+            const rightColWidth = canvas.width * (2 / 5);
+    
+            const albumArtSize = canvas.height * 0.38;
+            const albumX = leftColWidth + (rightColWidth - albumArtSize) / 2;
+            const albumY = (canvas.height - albumArtSize) / 2 - (30 * scaleFactor);
+    
+            ctx.save();
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+            ctx.shadowBlur = 20 * scaleFactor;
+            ctx.shadowOffsetX = 5 * scaleFactor;
+            ctx.shadowOffsetY = 10 * scaleFactor;
+            ctx.drawImage(albumImage, albumX, albumY, albumArtSize, albumArtSize);
+            ctx.restore();
+    
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'center';
+            ctx.font = `700 ${24 * scaleFactor}px ${fontFamily}`;
+            ctx.fillText(songTitle, leftColWidth + rightColWidth / 2, albumY + albumArtSize + (40 * scaleFactor), rightColWidth * 0.9);
+            
+            ctx.fillStyle = '#E5E7EB';
+            ctx.font = `500 ${20 * scaleFactor}px ${fontFamily}`;
+            ctx.fillText(artistName, leftColWidth + rightColWidth / 2, albumY + albumArtSize + (70 * scaleFactor), rightColWidth * 0.9);
 
-        ctx.save();
-        ctx.rect(0, 0, leftColWidth, canvas.height);
-        ctx.clip();
-        ctx.translate(0, currentCanvasTranslateY);
-        ctx.textAlign = 'left';
-        
-        lyricsToRender.forEach((lyric, index) => {
-            const style = getLyricStyle(index, canvasCurrentIndex);
-            ctx.font = style.font;
-            ctx.fillStyle = style.color;
-            ctx.fillText(lyric.text, 60, index * lyricLineHeight);
-        });
+            // --- Lyrics Drawing (with album art) ---
+            const targetTranslateY = canvas.height / 2 - (canvasCurrentIndex * lyricLineHeight) - lyricLineHeight / 2;
+            currentCanvasTranslateY += (targetTranslateY - currentCanvasTranslateY) * 0.1;
 
-        ctx.restore();
+            ctx.save();
+            ctx.rect(0, 0, leftColWidth, canvas.height);
+            ctx.clip();
+            ctx.translate(0, currentCanvasTranslateY);
+            ctx.textAlign = 'left';
+            
+            lyricsToRender.forEach((lyric, index) => {
+                const style = getLyricStyle(index, canvasCurrentIndex, exportFontSize);
+                ctx.font = style.font;
+                ctx.fillStyle = style.color;
+                ctx.globalAlpha = style.opacity;
+
+                if (ctx.globalAlpha > 0) {
+                   ctx.fillText(lyric.text, 60 * scaleFactor, index * lyricLineHeight);
+                }
+            });
+
+            ctx.globalAlpha = 1;
+            ctx.restore();
+        } else {
+             // --- Lyrics Drawing (without album art, centered) ---
+            const targetTranslateY = canvas.height / 2 - (canvasCurrentIndex * lyricLineHeight) - lyricLineHeight / 2;
+            currentCanvasTranslateY += (targetTranslateY - currentCanvasTranslateY) * 0.1;
+
+            ctx.save();
+            ctx.translate(0, currentCanvasTranslateY);
+            ctx.textAlign = 'center';
+            
+            lyricsToRender.forEach((lyric, index) => {
+                const style = getLyricStyle(index, canvasCurrentIndex, exportFontSize);
+                ctx.font = style.font;
+                ctx.fillStyle = style.color;
+                ctx.globalAlpha = style.opacity;
+
+                if (ctx.globalAlpha > 0) {
+                   ctx.fillText(lyric.text, canvas.width / 2, index * lyricLineHeight);
+                }
+            });
+
+            ctx.globalAlpha = 1;
+            ctx.restore();
+        }
+
         // --- End Drawing ---
-
         animationFrameId = requestAnimationFrame(drawFrame);
       };
       animationFrameId = requestAnimationFrame(drawFrame);
@@ -330,56 +448,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   };
   
   const durationValue = audioRef.current?.duration || 0;
-  
-  const getLyricStyle = (index: number, currentIdx?: number) => {
-    const activeIndex = currentIdx !== undefined ? currentIdx : currentIndex;
-    const style: { 
-        transition?: string;
-        fontFamily: string;
-        fontWeight: number;
-        textShadow?: string;
-        opacity?: number;
-        transform?: string;
-        fontSize?: string;
-        color: string;
-        font?: string; // For canvas
-    } = {
-        transition: 'transform 0.5s ease-out, opacity 0.5s ease-out, font-size 0.5s ease-out',
-        fontFamily: fontFamily,
-        fontWeight: 500,
-        textShadow: '2px 2px 5px rgba(0,0,0,0.5)',
-        color: '#D1D5DB', // default gray
-    };
-
-    let calculatedFontSize: number;
-
-    if (index === activeIndex) {
-        calculatedFontSize = fontSize;
-        style.opacity = 1;
-        style.transform = 'scale(1)';
-        style.color = '#FFFFFF';
-        style.fontWeight = 700;
-    } else if (index === activeIndex - 1 || index === activeIndex + 1) {
-        calculatedFontSize = fontSize * 0.7;
-        style.opacity = 0.6;
-        style.transform = 'scale(0.9)';
-        style.color = '#E5E7EB'; // text-gray-200
-    } else {
-        calculatedFontSize = fontSize * 0.6;
-        style.opacity = 0;
-        style.transform = 'scale(0.8)';
-        style.color = '#D1D5DB'; // text-gray-300
-    }
-    
-    style.fontSize = `${calculatedFontSize}px`;
-    style.font = `${style.fontWeight} ${calculatedFontSize}px ${style.fontFamily}`;
-
-    return style;
-  }
 
   return (
     <>
-      {exportProgress && <Loader message={exportProgress.message} progress={exportProgress.progress} onCancel={handleCancelExport} />}
+      {exportProgress && <Loader message={exportProgress.message} progress={exportProgress.progress} details={exportProgress.details} onCancel={handleCancelExport} />}
       <div className="w-full max-w-5xl mx-auto">
         <audio ref={audioRef} src={audioUrl} onLoadedMetadata={() => setCurrentTime(0)} />
         
@@ -389,17 +461,17 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
           <div className="absolute inset-0 bg-black/40" />
           
            <div className="relative z-10 w-full h-full flex p-4 sm:p-8 items-center">
-              {/* Left Column: Lyrics */}
-              <div className="w-3/5 h-full flex flex-col justify-center items-start overflow-hidden">
+              {/* Lyrics Column */}
+              <div className={`h-full flex flex-col justify-center overflow-hidden transition-all duration-500 ease-in-out ${includeAlbumArt ? 'w-3/5 items-start' : 'w-full items-center'}`}>
                 <div 
                     ref={lyricsContainerRef} 
-                    className="w-full transition-transform duration-500 ease-in-out"
+                    className={`transition-transform duration-500 ease-in-out ${includeAlbumArt ? 'w-full' : 'w-auto'}`}
                 >
                     {lyricsToRender.map((lyric, index) => (
                         <p
                             key={index}
                             ref={el => { lyricRefs.current[index] = el; }}
-                            className={`w-full p-2 tracking-wide leading-tight`}
+                            className={`p-2 tracking-wide leading-tight whitespace-nowrap ${includeAlbumArt ? '' : 'text-center'}`}
                             style={getLyricStyle(index)}
                         >
                             {lyric.text || '\u00A0' /* Non-breaking space for empty/dummy lines */}
@@ -408,14 +480,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                 </div>
               </div>
 
-              {/* Right Column: Album Art & Info */}
-              <div className="w-2/5 h-full flex flex-col justify-center items-center pl-4">
-                <img src={imageUrl} alt="專輯封面" className="w-full max-w-[280px] aspect-square object-cover rounded-xl shadow-2xl ring-1 ring-white/10" />
-                <div className="text-center mt-4 p-2 text-white w-full max-w-[280px]">
-                    <p className="font-bold text-lg truncate" title={songTitle}>{songTitle}</p>
-                    <p className="text-gray-300 truncate" title={artistName}>{artistName}</p>
-                </div>
-              </div>
+              {/* Album Art Column (Conditional) */}
+               {includeAlbumArt && (
+                  <div className="w-2/5 h-full flex flex-col justify-center items-center pl-4">
+                    <img src={imageUrl} alt="專輯封面" className="w-full max-w-[280px] aspect-square object-cover rounded-xl shadow-2xl ring-1 ring-white/10" />
+                    <div className="text-center mt-4 p-2 text-white w-full max-w-[280px]">
+                        <p className="font-bold text-lg truncate" title={songTitle}>{songTitle}</p>
+                        <p className="text-gray-300 truncate" title={artistName}>{artistName}</p>
+                    </div>
+                  </div>
+               )}
             </div>
         </div>
 
@@ -466,6 +540,28 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                             <option key={opt.value} value={opt.value} style={{ fontFamily: opt.value }}>{opt.name}</option>
                         ))}
                     </select>
+                </div>
+                 <div className="flex items-center gap-2 text-white">
+                    <label htmlFor="resolution" className="text-xs">解析度</label>
+                    <select
+                        id="resolution"
+                        value={resolution}
+                        onChange={(e) => setResolution(e.target.value)}
+                        className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-500"
+                    >
+                        <option value="720p">720p (1280x720)</option>
+                        <option value="1080p">1080p (1920x1080)</option>
+                    </select>
+                </div>
+                 <div className="flex items-center gap-2 text-white">
+                    <input
+                        id="include-album-art"
+                        type="checkbox"
+                        checked={includeAlbumArt}
+                        onChange={(e) => setIncludeAlbumArt(e.target.checked)}
+                        className="w-4 h-4 rounded bg-gray-900/50 border-gray-600 text-[#a6a6a6] focus:ring-[#a6a6a6] focus:ring-offset-gray-800"
+                    />
+                    <label htmlFor="include-album-art" className="text-xs cursor-pointer">包含封面</label>
                 </div>
                 <button onClick={handleExportSrt} className="px-3 py-2 text-sm bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-500 transition">
                     導出 SRT
