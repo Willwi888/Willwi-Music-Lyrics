@@ -5,13 +5,6 @@ import PauseIcon from './icons/PauseIcon';
 import PrevIcon from './icons/PrevIcon';
 import Loader from './Loader';
 
-// Allows access to the FFmpeg library loaded from the script tag in index.html
-declare global {
-  interface Window {
-    FFmpeg: any;
-  }
-}
-
 interface VideoPlayerProps {
   timedLyrics: TimedLyric[];
   audioUrl: string;
@@ -21,38 +14,12 @@ interface VideoPlayerProps {
   onBack: () => void;
 }
 
-const fetchFile = async (url: string | Blob): Promise<Uint8Array> => {
-  const isBlob = url instanceof Blob;
-  const buffer = isBlob ? await url.arrayBuffer() : await (await fetch(url)).arrayBuffer();
-  return new Uint8Array(buffer);
-};
-
 const fontOptions = [
   { name: '現代無襯線', value: 'sans-serif' },
   { name: '經典襯線', value: 'serif' },
   { name: '手寫體', value: 'cursive' },
   { name: '打字機', value: 'monospace' },
 ];
-
-const fontConfig = {
-  'sans-serif': { 
-    name: 'Noto Sans TC', 
-    url: 'https://storage.googleapis.com/aistudio-hosting/fonts/NotoSansTC-Regular.otf' 
-  },
-  'serif': { 
-    name: 'Noto Serif TC', 
-    url: 'https://storage.googleapis.com/aistudio-hosting/fonts/NotoSerifTC-Regular.otf' 
-  },
-  'cursive': { 
-    name: 'Ma Shan Zheng', 
-    url: 'https://storage.googleapis.com/aistudio-hosting/fonts/MaShanZheng-Regular.ttf' 
-  },
-  'monospace': { 
-    name: 'Noto Sans Mono', 
-    url: 'https://storage.googleapis.com/aistudio-hosting/fonts/NotoSansMono-Regular.ttf'
-  },
-};
-
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageUrl, songTitle, artistName, onBack }) => {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -61,7 +28,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   const audioRef = useRef<HTMLAudioElement>(null);
   const [fontSize, setFontSize] = useState(48);
   const [fontFamily, setFontFamily] = useState('sans-serif');
-  const ffmpegRef = useRef<any>(null);
   const isExportCancelled = useRef(false);
 
   const lyricsContainerRef = useRef<HTMLDivElement>(null);
@@ -98,9 +64,20 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   }, []);
   
   const currentIndex = useMemo(() => {
-    // We offset by 2 because of the dummy lyrics at the start
-    return timedLyrics.findIndex(lyric => currentTime >= lyric.startTime && currentTime < lyric.endTime) + 2;
-  }, [currentTime, timedLyrics]);
+    // If playback hasn't started (paused at time 0), no lyric should be active.
+    // We'll point to the second dummy lyric, which effectively shows nothing.
+    if (currentTime === 0 && !isPlaying) {
+      return 1;
+    }
+    
+    const index = timedLyrics.findIndex(
+      lyric => currentTime >= lyric.startTime && currentTime < lyric.endTime
+    );
+
+    // If a lyric is found, its index in lyricsToRender is index + 2.
+    // If not found (index is -1), this will result in 1, pointing to the second dummy lyric.
+    return index + 2;
+  }, [currentTime, timedLyrics, isPlaying]);
 
   useEffect(() => {
     if (currentIndex !== -1 && lyricsContainerRef.current && lyricRefs.current[currentIndex]) {
@@ -170,137 +147,230 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
 
   const handleCancelExport = () => {
     isExportCancelled.current = true;
-    if (ffmpegRef.current) {
-      try {
-        ffmpegRef.current.exit();
-      } catch (e) {
-        console.warn('Could not terminate FFmpeg process.', e);
-      }
-    }
-    ffmpegRef.current = null;
-    setExportProgress(null);
+    // The recording loop will see this flag and stop itself.
   };
 
-  const handleExportMp4 = async () => {
+  const handleExportVideo = async () => {
     if (!audioRef.current || !imageUrl) return;
-
     isExportCancelled.current = false;
     setExportProgress({ message: '正在初始化...', progress: 0 });
 
+    const canvas = document.createElement('canvas');
+    canvas.width = 1280;
+    canvas.height = 720;
+    const ctx = canvas.getContext('2d');
+
+    if (!ctx) {
+      alert('無法初始化 Canvas 進行匯出。');
+      setExportProgress(null);
+      return;
+    }
+
+    const loadImage = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => resolve(img);
+        img.onerror = (err) => reject(err);
+        img.src = src;
+    });
+
     try {
-        setExportProgress({ message: '正在初始化編碼器...', progress: 0 });
-        const { createFFmpeg } = window.FFmpeg;
-        const ffmpeg = createFFmpeg({
-            log: true,
-            corePath: 'https://unpkg.com/@ffmpeg/core-st@0.11.0/dist/ffmpeg-core.js',
+      setExportProgress({ message: '正在載入資源...', progress: 5 });
+      const [bgImage, albumImage] = await Promise.all([loadImage(imageUrl), loadImage(imageUrl)]);
+      setExportProgress({ message: '資源載入完畢', progress: 10 });
+      
+      const audio = audioRef.current;
+      const wasPlaying = isPlaying;
+      if (wasPlaying) handlePlayPause(); // Pause playback before starting
+
+      const audioContext = new AudioContext();
+      const audioSource = audioContext.createMediaElementSource(audio);
+      const audioDestination = audioContext.createMediaStreamDestination();
+      audioSource.connect(audioDestination);
+      audioSource.connect(audioContext.destination); // So we can hear it while recording
+      const audioStream = audioDestination.stream;
+
+      const videoStream = canvas.captureStream(30);
+
+      const combinedStream = new MediaStream([
+        ...videoStream.getVideoTracks(),
+        ...audioStream.getAudioTracks(),
+      ]);
+
+      const MimeType = MediaRecorder.isTypeSupported('video/mp4') ? 'video/mp4' : 'video/webm';
+      const fileExtension = MimeType.includes('mp4') ? 'mp4' : 'webm';
+
+      const recorder = new MediaRecorder(combinedStream, { mimeType: MimeType });
+      const recordedChunks: Blob[] = [];
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          recordedChunks.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        if (!isExportCancelled.current) {
+          const blob = new Blob(recordedChunks, { type: MimeType });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `lyric-video.${fileExtension}`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+        }
+        
+        // Cleanup
+        combinedStream.getTracks().forEach(track => track.stop());
+        audioContext.close();
+        setExportProgress(null);
+        if(wasPlaying) audio.play();
+      };
+      
+      let animationFrameId: number;
+      audio.currentTime = 0;
+      audio.play();
+      recorder.start();
+
+      const drawFrame = () => {
+        const currentPlaybackTime = audio.currentTime;
+        const duration = audio.duration;
+
+        if (currentPlaybackTime >= duration || recorder.state !== 'recording' || isExportCancelled.current) {
+          if (recorder.state === 'recording') recorder.stop();
+          if (audio) {
+            audio.pause();
+            audio.currentTime = 0;
+          }
+          cancelAnimationFrame(animationFrameId);
+          return;
+        }
+
+        const progress = (currentPlaybackTime / duration) * 100;
+        setExportProgress({ 
+          message: `正在錄製影片... (${formatTime(currentPlaybackTime)} / ${formatTime(duration)})`, 
+          progress 
         });
-        ffmpegRef.current = ffmpeg;
 
-        await ffmpeg.load();
-        if (isExportCancelled.current) return;
+        // --- Start Drawing on Canvas ---
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
         
-        const selectedFont = fontConfig[fontFamily as keyof typeof fontConfig] || fontConfig['sans-serif'];
-        const FONT_URL = selectedFont.url;
-        const FONT_NAME = selectedFont.name;
-        const FONT_FILENAME = FONT_URL.split('/').pop() || 'font.file';
+        ctx.save();
+        ctx.filter = 'blur(16px) brightness(0.7)';
+        ctx.drawImage(bgImage, -20, -20, canvas.width + 40, canvas.height + 40);
+        ctx.restore();
 
-        setExportProgress({ message: '正在準備資源...', progress: 10 });
+        ctx.fillStyle = 'rgba(0,0,0,0.4)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        const [image, audio, font] = await Promise.all([
-            fetchFile(imageUrl),
-            fetchFile(audioUrl),
-            fetchFile(FONT_URL)
-        ]);
+        const leftColWidth = canvas.width * (3 / 5);
+        const rightColWidth = canvas.width * (2 / 5);
 
-        ffmpeg.FS('writeFile', 'image.jpg', image);
-        ffmpeg.FS('writeFile', 'audio.mp3', audio);
-        ffmpeg.FS('writeFile', FONT_FILENAME, font);
-        
-        const srtContent = generateSrtContent();
-        ffmpeg.FS('writeFile', 'lyrics.srt', srtContent);
-        
-        if (isExportCancelled.current) return;
+        const albumArtSize = Math.min(280, rightColWidth * 0.8);
+        const albumX = leftColWidth + (rightColWidth - albumArtSize) / 2;
+        const albumY = (canvas.height - albumArtSize) / 2 - 30;
 
-        setExportProgress({ message: '正在生成影片指令...', progress: 20 });
+        ctx.save();
+        ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+        ctx.shadowBlur = 20;
+        ctx.shadowOffsetX = 5;
+        ctx.shadowOffsetY = 10;
+        ctx.drawImage(albumImage, albumX, albumY, albumArtSize, albumArtSize);
+        ctx.restore();
+
+        ctx.fillStyle = 'white';
+        ctx.textAlign = 'center';
+        ctx.font = `700 24px ${fontFamily}`;
+        ctx.fillText(songTitle, leftColWidth + rightColWidth / 2, albumY + albumArtSize + 40, rightColWidth * 0.9);
         
-        const scaledFontSize = Math.round(fontSize * 0.75); // Scale font size for video
+        ctx.fillStyle = '#E5E7EB';
+        ctx.font = `500 20px ${fontFamily}`;
+        ctx.fillText(artistName, leftColWidth + rightColWidth / 2, albumY + albumArtSize + 70, rightColWidth * 0.9);
+
+        // --- Lyrics Drawing ---
+        const lyricIdx = timedLyrics.findIndex(l => currentPlaybackTime >= l.startTime && currentPlaybackTime < l.endTime);
+        const canvasCurrentIndex = lyricIdx + 2;
+
+        const lyricLineHeight = fontSize * 1.5;
+        const totalLyricBlockHeight = lyricsToRender.length * lyricLineHeight;
         
-        const subtitlesFilter = `subtitles=lyrics.srt:fontsdir=./:force_style='FontName=${FONT_NAME},FontSize=${scaledFontSize},PrimaryColour=&HFFFFFF,OutlineColour=&H000000,BorderStyle=1,Outline=1,Shadow=1,MarginV=50'`;
-        const vf = `scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:-1:-1:color=black,${subtitlesFilter}`;
+        const currentLyricOffsetTop = canvasCurrentIndex * lyricLineHeight;
+        const translateY = canvas.height / 2 - currentLyricOffsetTop - lyricLineHeight / 2;
+
+        ctx.save();
+        ctx.rect(0, 0, leftColWidth, canvas.height);
+        ctx.clip();
+        ctx.translate(0, translateY);
+        ctx.textAlign = 'left';
         
-        ffmpeg.setProgress(({ ratio }) => {
-            if (isExportCancelled.current) return;
-            const progress = 20 + Math.round(ratio * 80);
-            setExportProgress({ message: '正在編碼影片...', progress: Math.min(progress, 100) });
+        lyricsToRender.forEach((lyric, index) => {
+            const style = getLyricStyle(index, canvasCurrentIndex);
+            ctx.font = style.font;
+            ctx.fillStyle = style.color;
+            ctx.fillText(lyric.text, 60, index * lyricLineHeight);
         });
-        
-        setExportProgress({ message: '正在編碼影片...', progress: 21 });
 
-        await ffmpeg.run(
-            '-loop', '1',
-            '-i', 'image.jpg',
-            '-i', 'audio.mp3',
-            '-vf', vf,
-            '-c:v', 'libx264',
-            '-tune', 'stillimage',
-            '-preset', 'ultrafast',
-            '-pix_fmt', 'yuv420p',
-            '-c:a', 'aac',
-            '-shortest',
-            'output.mp4'
-        );
+        ctx.restore();
+        // --- End Drawing ---
 
-        if (isExportCancelled.current) return;
-
-        const data = ffmpeg.FS('readFile', 'output.mp4');
-        const videoUrl = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
-
-        const a = document.createElement('a');
-        a.href = videoUrl;
-        a.download = 'lyric-video.mp4';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(videoUrl);
+        animationFrameId = requestAnimationFrame(drawFrame);
+      };
+      animationFrameId = requestAnimationFrame(drawFrame);
 
     } catch (error) {
-        console.error('MP4 導出失敗:', error);
-        if (!isExportCancelled.current) {
-            alert('影片匯出失敗！\n\n編碼過程中發生錯誤。這可能是由於影片時間過長、瀏覽器記憶體不足或音訊檔案格式問題所導致。\n\n建議操作：\n1. 嘗試匯出較短的片段。\n2. 關閉其他瀏覽器分頁後再試一次。\n3. 確認您的音訊檔案 (.mp3, .wav) 沒有損壞。');
-        }
-    } finally {
-        ffmpegRef.current = null;
-        setExportProgress(null);
+      console.error("Video export failed:", error);
+      alert('影片匯出失敗！可能因為無法載入圖片或您的瀏覽器不支援此功能。');
+      setExportProgress(null);
     }
-};
+  };
   
   const durationValue = audioRef.current?.duration || 0;
-
-  const getLyricStyle = (index: number) => {
-    const style: React.CSSProperties = {
+  
+  const getLyricStyle = (index: number, currentIdx?: number) => {
+    const activeIndex = currentIdx !== undefined ? currentIdx : currentIndex;
+    const style: { 
+        transition?: string;
+        fontFamily: string;
+        fontWeight: number;
+        textShadow?: string;
+        opacity?: number;
+        transform?: string;
+        fontSize?: string;
+        color: string;
+        font?: string; // For canvas
+    } = {
         transition: 'transform 0.5s ease-out, opacity 0.5s ease-out, font-size 0.5s ease-out',
         fontFamily: fontFamily,
         fontWeight: 500,
         textShadow: '2px 2px 5px rgba(0,0,0,0.5)',
+        color: '#D1D5DB', // default gray
     };
 
-    if (index === currentIndex) {
+    let calculatedFontSize: number;
+
+    if (index === activeIndex) {
+        calculatedFontSize = fontSize;
         style.opacity = 1;
         style.transform = 'scale(1)';
-        style.fontSize = `${fontSize}px`;
         style.color = '#FFFFFF';
         style.fontWeight = 700;
-    } else if (index === currentIndex - 1 || index === currentIndex + 1) {
+    } else if (index === activeIndex - 1 || index === activeIndex + 1) {
+        calculatedFontSize = fontSize * 0.7;
         style.opacity = 0.6;
         style.transform = 'scale(0.9)';
-        style.fontSize = `${fontSize * 0.7}px`;
         style.color = '#E5E7EB'; // text-gray-200
     } else {
+        calculatedFontSize = fontSize * 0.6;
         style.opacity = 0;
         style.transform = 'scale(0.8)';
-        style.fontSize = `${fontSize * 0.6}px`;
         style.color = '#D1D5DB'; // text-gray-300
     }
+    
+    style.fontSize = `${calculatedFontSize}px`;
+    style.font = `${style.fontWeight} ${calculatedFontSize}px ${style.fontFamily}`;
+
     return style;
   }
 
@@ -397,8 +467,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                 <button onClick={handleExportSrt} className="px-3 py-2 text-sm bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-500 transition">
                     導出 SRT
                 </button>
-                <button onClick={handleExportMp4} className="px-3 py-2 text-sm bg-[#a6a6a6] text-gray-900 font-semibold rounded-lg hover:bg-[#999999] border border-white/50 transition">
-                    導出 MP4
+                <button onClick={handleExportVideo} className="px-3 py-2 text-sm bg-[#a6a6a6] text-gray-900 font-semibold rounded-lg hover:bg-[#999999] border border-white/50 transition">
+                    導出影片
                 </button>
               </div>
           </div>
