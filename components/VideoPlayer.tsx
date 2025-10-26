@@ -20,6 +20,8 @@ const fontOptions = [
   { name: '經典襯線', value: 'serif' },
   { name: '手寫體', value: 'cursive' },
   { name: '打字機', value: 'monospace' },
+  { name: '日文黑體', value: "'Noto Sans JP', sans-serif" },
+  { name: '韓文黑體', value: "'Noto Sans KR', sans-serif" },
 ];
 
 const resolutions: { [key: string]: { width: number; height: number } } = {
@@ -387,8 +389,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       // --- END REFACTORED AUDIO CONTEXT HANDLING ---
 
       const audioDestination = audioContext.createMediaStreamDestination();
+      
+      // Mute audio output during export by disconnecting from main destination
+      try {
+          audioSource.disconnect(audioContext.destination);
+      } catch(e) {
+          console.warn("Audio source was not connected to destination, continuing.", e);
+      }
       audioSource.connect(audioDestination);
       const audioStream = audioDestination.stream;
+
 
       const videoStream = canvas.captureStream(30);
 
@@ -424,11 +434,17 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         
         // Cleanup
         combinedStream.getTracks().forEach(track => track.stop());
-        // Disconnect the temporary destination node, but keep the context alive
+        
+        // Disconnect from recording stream and reconnect to speakers
         try {
           audioSource.disconnect(audioDestination);
         } catch (e) {
           console.warn("Could not disconnect audio destination.", e);
+        }
+        try {
+            audioSource.connect(audioContext.destination);
+        } catch(e) {
+            console.warn("Could not reconnect audio source to destination.", e);
         }
         setExportProgress(null);
         if(wasPlaying) audio.play();
@@ -442,7 +458,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       
       const scaleFactor = canvas.height / 720;
       const exportFontSize = fontSize * scaleFactor;
-      const lyricLineHeight = exportFontSize * 2.5;
+      const lyricLineHeight = exportFontSize * 3.0;
       
       const initialTranslateY = canvas.height / 2 - (2 * lyricLineHeight) - lyricLineHeight / 2;
       let currentCanvasTranslateY = initialTranslateY;
@@ -634,7 +650,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                         <p
                             key={index}
                             ref={el => { lyricRefs.current[index] = el; }}
-                            className={`px-2 py-4 tracking-wide leading-relaxed whitespace-nowrap ${includeAlbumArt ? '' : 'text-center'}`}
+                            className={`px-2 py-6 tracking-wide leading-relaxed whitespace-nowrap ${includeAlbumArt ? '' : 'text-center'}`}
                             style={getLyricStyle(index)}
                         >
                             {lyric.text || '\u00A0' /* Non-breaking space for empty/dummy lines */}
@@ -696,7 +712,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                     <input
                         id="font-size"
                         type="range"
-                        min="24"
+                        min="16"
                         max="80"
                         value={fontSize}
                         onChange={(e) => setFontSize(Number(e.target.value))}
