@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { TimedLyric } from '../types';
 import PlayIcon from './icons/PlayIcon';
 import PauseIcon from './icons/PauseIcon';
 import PrevIcon from './icons/PrevIcon';
 import Loader from './Loader';
+import MusicIcon from './icons/MusicIcon';
 
 interface VideoPlayerProps {
   timedLyrics: TimedLyric[];
@@ -19,41 +20,64 @@ const fontOptions = [
   { name: '經典襯線', value: 'serif' },
   { name: '手寫體', value: 'cursive' },
   { name: '打字機', value: 'monospace' },
+  { name: '日文黑體', value: "'Noto Sans JP', sans-serif" },
+  { name: '韓文黑體', value: "'Noto Sans KR', sans-serif" },
 ];
 
-// Helper to generate noise texture
-const createNoiseTexture = (width: number, height: number, opacity: number): string => {
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext('2d')!;
-    const imageData = ctx.createImageData(width, height);
-    const data = imageData.data;
-    for (let i = 0; i < data.length; i += 4) {
-        const val = Math.random() * 255;
-        data[i] = val;     // R
-        data[i + 1] = val; // G
-        data[i + 2] = val; // B
-        data[i + 3] = 255 * opacity; // Alpha
-    }
-    ctx.putImageData(imageData, 0, 0);
-    return canvas.toDataURL('image/png');
+const resolutions: { [key: string]: { width: number; height: number } } = {
+  '720p': { width: 1280, height: 720 },
+  '1080p': { width: 1920, height: 1080 },
 };
 
+const colorThemes: { [key: string]: { name: string; active: string; inactive1: string; inactive2: string; info: string; subInfo: string; } } = {
+  light: {
+    name: '明亮',
+    active: '#FFFFFF',
+    inactive1: '#E5E7EB',
+    inactive2: '#D1D5DB',
+    info: '#FFFFFF',
+    subInfo: '#E5E7EB',
+  },
+  dark: {
+    name: '深邃',
+    active: '#1F2937',
+    inactive1: '#4B5563',
+    inactive2: '#6B7280',
+    info: '#1F2937',
+    subInfo: '#4B5563',
+  },
+  colorized: {
+    name: '多彩',
+    active: '#FBBF24', // Amber 400
+    inactive1: '#FFFFFF',
+    inactive2: '#E5E7EB',
+    info: '#FBBF24',
+    subInfo: '#FFFFFF',
+  },
+};
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageUrl, songTitle, artistName, onBack }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [exportProgress, setExportProgress] = useState<{ message: string; progress: number } | null>(null);
+  const [isEnded, setIsEnded] = useState(false);
+  const [exportProgress, setExportProgress] = useState<{ message: string; progress: number; details?: string } | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [fontSize, setFontSize] = useState(48);
   const [fontFamily, setFontFamily] = useState('sans-serif');
-  const [aspectRatio, setAspectRatio] = useState('16:9');
+  const [colorTheme, setColorTheme] = useState('light');
   const [resolution, setResolution] = useState('720p');
+  const [includeAlbumArt, setIncludeAlbumArt] = useState(true);
+  const [animationStyle, setAnimationStyle] = useState('disc'); // 'disc' or 'vertical'
+  const [hasPlaybackStarted, setHasPlaybackStarted] = useState(false);
   const isExportCancelled = useRef(false);
+  
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const mediaElementSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
 
   const lyricsContainerRef = useRef<HTMLDivElement>(null);
   const lyricRefs = useRef<(HTMLParagraphElement | null)[]>([]);
+  // FIX: Explicitly initialize useRef with null to avoid potential linter/compiler issues with the no-argument overload.
+  const animationFrameIdRef = useRef<number | null>(null);
 
   const lyricsToRender = useMemo(() => {
     if (!timedLyrics || timedLyrics.length === 0) return [];
@@ -68,65 +92,95 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     ];
   }, [timedLyrics]);
 
-  const noiseTexture = useMemo(() => createNoiseTexture(100, 100, 0.04), []);
-
-
+  // This effect handles the animation loop during playback using requestAnimationFrame for smoothness
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
-    const timeUpdateHandler = () => setCurrentTime(audio.currentTime);
-    const endedHandler = () => setIsPlaying(false);
+    const animate = () => {
+      setCurrentTime(audio.currentTime);
+      animationFrameIdRef.current = requestAnimationFrame(animate);
+    };
 
-    audio.addEventListener('timeupdate', timeUpdateHandler);
-    audio.addEventListener('ended', endedHandler);
+    if (isPlaying) {
+      animationFrameIdRef.current = requestAnimationFrame(animate);
+    } else {
+      if (animationFrameIdRef.current) {
+        cancelAnimationFrame(animationFrameIdRef.current);
+      }
+      // Also ensure time is updated when pausing
+      setCurrentTime(audio.currentTime);
+    }
 
     return () => {
-      audio.removeEventListener('timeupdate', timeUpdateHandler);
+      if (animationFrameIdRef.current) {
+        cancelAnimationFrame(animationFrameIdRef.current);
+      }
+    };
+  }, [isPlaying]);
+
+  // This effect handles the 'ended' event and scrubbing the timeline while paused
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const endedHandler = () => {
+      setIsPlaying(false);
+      setIsEnded(true);
+    };
+    
+    const handleScrubbing = () => {
+      // Only update from timeupdate if paused, to avoid conflict with the animation loop
+      if (audio.paused) {
+        setCurrentTime(audio.currentTime);
+      }
+    };
+
+    audio.addEventListener('ended', endedHandler);
+    audio.addEventListener('timeupdate', handleScrubbing);
+
+    return () => {
       audio.removeEventListener('ended', endedHandler);
+      audio.removeEventListener('timeupdate', handleScrubbing);
+    };
+  }, []);
+
+  // Effect to clean up the persistent AudioContext on component unmount
+  useEffect(() => {
+    return () => {
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        mediaElementSourceRef.current?.disconnect();
+        audioContextRef.current.close();
+      }
     };
   }, []);
   
   const currentIndex = useMemo(() => {
-    // Before playback starts
-    if (currentTime === 0 && !isPlaying) {
-      return 1; // An empty dummy lyric
+    if (isEnded) {
+      return timedLyrics.length + 2;
     }
-
+    
+    // If playback hasn't started (paused at time 0), point to the dummy lyric before the first real one.
+    if (currentTime === 0 && !isPlaying) {
+      return 1;
+    }
+    
     const index = timedLyrics.findIndex(
       lyric => currentTime >= lyric.startTime && currentTime < lyric.endTime
     );
-
+  
     if (index !== -1) {
-      return index + 2; // The active lyric
+      return index + 2; // A lyric is active, point to it.
     }
-
-    // No active lyric found, determine position
-    if (timedLyrics.length > 0) {
-      // After the last lyric
-      if (currentTime >= timedLyrics[timedLyrics.length - 1].endTime) {
-        return timedLyrics.length + 2; // A dummy lyric at the end
-      }
+  
+    // If no lyric is active, check if we're past the end of the song.
+    if (timedLyrics.length > 0 && currentTime >= timedLyrics[timedLyrics.length - 1].endTime) {
+      return timedLyrics.length + 2; // Point to the dummy lyric *after* the last real one.
     }
-    
-    // In a gap or before first lyric
-    let lastPassedIndex = -1;
-    for (let i = 0; i < timedLyrics.length; i++) {
-        if (currentTime >= timedLyrics[i].endTime) {
-            lastPassedIndex = i;
-        } else {
-            break;
-        }
-    }
-    // If we're in a gap, point to the dummy after the last passed lyric
-    if (lastPassedIndex !== -1) {
-        return lastPassedIndex + 2 + 1; // lastPassedIndex + 3
-    }
-    
-    // Before first lyric
+  
+    // Otherwise, we're before the first lyric.
     return 1;
-
-  }, [currentTime, timedLyrics, isPlaying]);
+  }, [currentTime, timedLyrics, isPlaying, isEnded]);
 
 
   useEffect(() => {
@@ -136,17 +190,25 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         const newTransform = `translateY(${container.offsetHeight / 2 - activeLyricElement.offsetTop - activeLyricElement.offsetHeight / 2}px)`;
         container.style.transform = newTransform;
     }
-  }, [currentIndex, fontSize, aspectRatio]); // Re-run when aspect ratio changes
+  }, [currentIndex, fontSize, includeAlbumArt]);
 
 
   const handlePlayPause = () => {
     if (audioRef.current) {
-      if (isPlaying) {
-        audioRef.current.pause();
-      } else {
-        audioRef.current.play();
-      }
-      setIsPlaying(!isPlaying);
+        if (isPlaying) {
+            audioRef.current.pause();
+        } else {
+            if (audioRef.current.ended) {
+                audioRef.current.currentTime = 0;
+                setCurrentTime(0);
+                setIsEnded(false);
+            }
+            if (!hasPlaybackStarted) {
+                setHasPlaybackStarted(true);
+            }
+            audioRef.current.play();
+        }
+        setIsPlaying(!isPlaying);
     }
   };
   
@@ -155,6 +217,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     if (audioRef.current) {
       audioRef.current.currentTime = time;
       setCurrentTime(time);
+      setIsEnded(false);
+      if (!hasPlaybackStarted && time > 0) {
+        setHasPlaybackStarted(true);
+      }
     }
   };
   
@@ -197,7 +263,76 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
 
   const handleCancelExport = () => {
     isExportCancelled.current = true;
+    // The recording loop will see this flag and stop itself.
   };
+
+  const getLyricStyle = (index: number, currentIdx?: number, baseFontSize: number = fontSize) => {
+    const activeIndex = currentIdx !== undefined ? currentIdx : currentIndex;
+    const distance = Math.abs(index - activeIndex);
+    const rotation = animationStyle === 'disc' ? (activeIndex - index) * 10 : 0;
+    const theme = colorThemes[colorTheme];
+
+    const style: { 
+        transition: string;
+        fontFamily: string;
+        fontWeight: number;
+        textShadow: string;
+        opacity: number;
+        transform: string;
+        transformOrigin: string;
+        fontSize: string;
+        color: string;
+        font: string; // For canvas
+    } = {
+        transition: 'transform 0.5s ease-out, opacity 0.5s ease-out, font-size 0.5s ease-out, color 0.5s ease-out',
+        fontFamily: fontFamily,
+        fontWeight: 500,
+        textShadow: '2px 2px 5px rgba(0,0,0,0.5)',
+        transformOrigin: includeAlbumArt ? 'left center' : 'center center',
+        opacity: 0,
+        transform: 'scale(0.8)',
+        fontSize: `${baseFontSize * 0.6}px`,
+        color: theme.inactive2,
+        font: ''
+    };
+    
+    let calculatedFontSize: number;
+    let scale: number;
+
+    switch (distance) {
+      case 0: // Active lyric
+        calculatedFontSize = baseFontSize;
+        scale = 1;
+        style.opacity = 1;
+        style.color = theme.active;
+        style.fontWeight = 700;
+        break;
+      case 1: // Immediate neighbors
+        calculatedFontSize = baseFontSize * 0.8;
+        scale = 0.95;
+        style.opacity = 0.7;
+        style.color = theme.inactive1;
+        break;
+      case 2: // Further neighbors
+        calculatedFontSize = baseFontSize * 0.7;
+        scale = 0.9;
+        style.opacity = 0.4;
+        style.color = theme.inactive2;
+        break;
+      default: // Hidden lyrics
+        calculatedFontSize = baseFontSize * 0.6;
+        scale = 0.8;
+        style.opacity = 0;
+        style.color = theme.inactive2;
+        break;
+    }
+    
+    style.fontSize = `${calculatedFontSize}px`;
+    style.transform = `scale(${scale}) rotate(${rotation}deg)`;
+    style.font = `${style.fontWeight} ${calculatedFontSize}px ${style.fontFamily}`;
+
+    return style;
+  }
 
   const handleExportVideo = async () => {
     if (!audioRef.current || !imageUrl) return;
@@ -205,20 +340,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     setExportProgress({ message: '正在初始化...', progress: 0 });
 
     const canvas = document.createElement('canvas');
-    const getCanvasDimensions = () => {
-        const baseWidth = resolution === '1080p' ? 1920 : 1280;
-        const baseHeight = resolution === '1080p' ? 1080 : 720;
-        switch (aspectRatio) {
-            case '16:9': return { width: baseWidth, height: baseHeight };
-            case '9:16': return { width: baseHeight, height: baseWidth };
-            case '1:1': return { width: baseHeight, height: baseHeight };
-            default: return { width: 1280, height: 720 };
-        }
-    };
-
-    const { width, height } = getCanvasDimensions();
-    canvas.width = width;
-    canvas.height = height;
+    const selectedResolution = resolutions[resolution];
+    canvas.width = selectedResolution.width;
+    canvas.height = selectedResolution.height;
     const ctx = canvas.getContext('2d');
 
     if (!ctx) {
@@ -237,37 +361,44 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
 
     try {
       setExportProgress({ message: '正在載入資源...', progress: 5 });
-      const [bgImage, albumImage] = await Promise.all([loadImage(imageUrl), loadImage(imageUrl)]);
-      setExportProgress({ message: '資源載入完畢', progress: 10 });
+      
+      const [bgImage, albumImage] = await Promise.all([
+        loadImage(imageUrl), 
+        loadImage(imageUrl),
+      ]);
 
-      // Create noise pattern
-      let noisePattern: CanvasPattern | null = null;
-      const noiseCanvas = document.createElement('canvas');
-      noiseCanvas.width = 100;
-      noiseCanvas.height = 100;
-      const noiseCtx = noiseCanvas.getContext('2d');
-      if (noiseCtx) {
-          const noiseImageData = noiseCtx.createImageData(100, 100);
-          const noiseData = noiseImageData.data;
-          for (let i = 0; i < noiseData.length; i += 4) {
-              const val = Math.floor(Math.random() * 255);
-              noiseData[i] = val; noiseData[i+1] = val; noiseData[i+2] = val;
-              noiseData[i + 3] = 255 * 0.04; // 4% opacity noise
-          }
-          noiseCtx.putImageData(noiseImageData, 0, 0);
-          noisePattern = ctx.createPattern(noiseCanvas, 'repeat');
-      }
+      setExportProgress({ message: '資源載入完畢', progress: 10 });
       
       const audio = audioRef.current;
       const wasPlaying = isPlaying;
-      if (wasPlaying) handlePlayPause();
+      if (wasPlaying) handlePlayPause(); // Pause playback before starting
 
-      const audioContext = new AudioContext();
-      const audioSource = audioContext.createMediaElementSource(audio);
+      // --- REFACTORED AUDIO CONTEXT HANDLING ---
+      // Lazily create and reuse the AudioContext and MediaElementSourceNode
+      if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        mediaElementSourceRef.current = null; // Force source recreation if context is new
+      }
+      const audioContext = audioContextRef.current;
+      
+      if (!mediaElementSourceRef.current) {
+        mediaElementSourceRef.current = audioContext.createMediaElementSource(audio);
+        mediaElementSourceRef.current.connect(audioContext.destination);
+      }
+      const audioSource = mediaElementSourceRef.current;
+      // --- END REFACTORED AUDIO CONTEXT HANDLING ---
+
       const audioDestination = audioContext.createMediaStreamDestination();
+      
+      // Mute audio output during export by disconnecting from main destination
+      try {
+          audioSource.disconnect(audioContext.destination);
+      } catch(e) {
+          console.warn("Audio source was not connected to destination, continuing.", e);
+      }
       audioSource.connect(audioDestination);
-      audioSource.connect(audioContext.destination);
       const audioStream = audioDestination.stream;
+
 
       const videoStream = canvas.captureStream(30);
 
@@ -283,7 +414,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       const recordedChunks: Blob[] = [];
 
       recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) recordedChunks.push(event.data);
+        if (event.data.size > 0) {
+          recordedChunks.push(event.data);
+        }
       };
 
       recorder.onstop = () => {
@@ -292,14 +425,27 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a');
           a.href = url;
-          a.download = `lyric-video.${fileExtension}`;
+          a.download = `${songTitle}-${artistName}-${resolution}.${fileExtension}`;
           document.body.appendChild(a);
           a.click();
           document.body.removeChild(a);
           URL.revokeObjectURL(url);
         }
+        
+        // Cleanup
         combinedStream.getTracks().forEach(track => track.stop());
-        audioContext.close();
+        
+        // Disconnect from recording stream and reconnect to speakers
+        try {
+          audioSource.disconnect(audioDestination);
+        } catch (e) {
+          console.warn("Could not disconnect audio destination.", e);
+        }
+        try {
+            audioSource.connect(audioContext.destination);
+        } catch(e) {
+            console.warn("Could not reconnect audio source to destination.", e);
+        }
         setExportProgress(null);
         if(wasPlaying) audio.play();
       };
@@ -308,14 +454,16 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       audio.currentTime = 0;
       audio.play();
       recorder.start();
+      const exportStartTime = Date.now();
       
-      const baseCanvasHeight = 720;
-      const fontScale = canvas.height / baseCanvasHeight;
-      const scaledFontSize = fontSize * fontScale;
-      const lyricLineHeight = scaledFontSize * 1.5;
+      const scaleFactor = canvas.height / 720;
+      const exportFontSize = fontSize * scaleFactor;
+      const lyricLineHeight = exportFontSize * 3.0;
       
-      let initialTranslateY = canvas.height / 2 - (2 * lyricLineHeight) - lyricLineHeight / 2;
+      const initialTranslateY = canvas.height / 2 - (2 * lyricLineHeight) - lyricLineHeight / 2;
       let currentCanvasTranslateY = initialTranslateY;
+
+      const theme = colorThemes[colorTheme];
 
       const drawFrame = () => {
         const currentPlaybackTime = audio.currentTime;
@@ -323,15 +471,32 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
 
         if (currentPlaybackTime >= duration || recorder.state !== 'recording' || isExportCancelled.current) {
           if (recorder.state === 'recording') recorder.stop();
-          if (audio) { audio.pause(); audio.currentTime = 0; }
+          if (audio) {
+            audio.pause();
+            audio.currentTime = 0;
+          }
           cancelAnimationFrame(animationFrameId);
           return;
         }
 
         const progress = (currentPlaybackTime / duration) * 100;
+        
+        const elapsedTime = (Date.now() - exportStartTime) / 1000; // in seconds
+        let estimatedTimeRemainingDetails = '';
+        if (progress > 1 && elapsedTime > 1) {
+            const totalTime = elapsedTime / (progress / 100);
+            const remainingTimeSeconds = Math.round(totalTime - elapsedTime);
+            if (remainingTimeSeconds > 0 && isFinite(remainingTimeSeconds)) {
+              const minutes = Math.floor(remainingTimeSeconds / 60);
+              const seconds = remainingTimeSeconds % 60;
+              estimatedTimeRemainingDetails = `預計剩餘 ${minutes}分 ${seconds.toString().padStart(2, '0')}秒`;
+            }
+        }
+
         setExportProgress({ 
-          message: `正在錄製影片... (${formatTime(currentPlaybackTime)} / ${formatTime(duration)})`, 
-          progress 
+          message: `經紀人趕工中...`, 
+          progress,
+          details: estimatedTimeRemainingDetails
         });
 
         // --- Start Drawing on Canvas ---
@@ -345,11 +510,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         ctx.fillStyle = 'rgba(0,0,0,0.4)';
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         
-        if (noisePattern) {
-            ctx.fillStyle = noisePattern;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-        }
-        
         const lyricIdx = timedLyrics.findIndex(l => currentPlaybackTime >= l.startTime && currentPlaybackTime < l.endTime);
         
         let canvasCurrentIndex;
@@ -361,79 +521,99 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
             canvasCurrentIndex = 1;
         }
 
-
-        // --- Layout Specific Drawing ---
-        if (aspectRatio === '16:9') {
+        if (includeAlbumArt) {
             const leftColWidth = canvas.width * (3 / 5);
             const rightColWidth = canvas.width * (2 / 5);
-            const albumArtSize = Math.min(canvas.height * 0.4, rightColWidth * 0.75);
+    
+            const albumArtSize = canvas.height * 0.38;
             const albumX = leftColWidth + (rightColWidth - albumArtSize) / 2;
-            const albumY = (canvas.height - albumArtSize) / 2 - (canvas.height * 0.04);
-            
+            const albumY = (canvas.height - albumArtSize) / 2 - (30 * scaleFactor);
+    
             ctx.save();
-            ctx.shadowColor = 'rgba(0, 0, 0, 0.4)'; ctx.shadowBlur = 15; ctx.shadowOffsetX = 4; ctx.shadowOffsetY = 8;
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
+            ctx.shadowBlur = 20 * scaleFactor;
+            ctx.shadowOffsetX = 5 * scaleFactor;
+            ctx.shadowOffsetY = 10 * scaleFactor;
             ctx.drawImage(albumImage, albumX, albumY, albumArtSize, albumArtSize);
             ctx.restore();
+    
+            ctx.fillStyle = theme.info;
+            ctx.textAlign = 'center';
+            ctx.font = `700 ${24 * scaleFactor}px ${fontFamily}`;
+            ctx.fillText(songTitle, leftColWidth + rightColWidth / 2, albumY + albumArtSize + (40 * scaleFactor), rightColWidth * 0.9);
+            
+            ctx.fillStyle = theme.subInfo;
+            ctx.font = `500 ${20 * scaleFactor}px ${fontFamily}`;
+            ctx.fillText(artistName, leftColWidth + rightColWidth / 2, albumY + albumArtSize + (70 * scaleFactor), rightColWidth * 0.9);
 
-            ctx.fillStyle = 'white'; ctx.textAlign = 'center';
-            ctx.font = `700 ${24 * fontScale}px ${fontFamily}`;
-            ctx.fillText(songTitle, leftColWidth + rightColWidth / 2, albumY + albumArtSize + (40 * fontScale), rightColWidth * 0.9);
-            
-            ctx.fillStyle = '#E5E7EB'; ctx.font = `500 ${20 * fontScale}px ${fontFamily}`;
-            ctx.fillText(artistName, leftColWidth + rightColWidth / 2, albumY + albumArtSize + (70 * fontScale), rightColWidth * 0.9);
-            
+            // --- Lyrics Drawing (with album art) ---
             const targetTranslateY = canvas.height / 2 - (canvasCurrentIndex * lyricLineHeight) - lyricLineHeight / 2;
             currentCanvasTranslateY += (targetTranslateY - currentCanvasTranslateY) * 0.1;
 
             ctx.save();
-            ctx.rect(0, 0, leftColWidth, canvas.height); ctx.clip();
-            ctx.translate(0, currentCanvasTranslateY); ctx.textAlign = 'left';
+            ctx.rect(0, 0, leftColWidth, canvas.height);
+            ctx.clip();
+            ctx.translate(0, currentCanvasTranslateY);
+            ctx.textAlign = 'left';
             
             lyricsToRender.forEach((lyric, index) => {
-                const style = getLyricStyle(index, canvasCurrentIndex, fontScale);
-                ctx.font = style.font!; ctx.globalAlpha = style.opacity!;
+                const style = getLyricStyle(index, canvasCurrentIndex, exportFontSize);
+                ctx.font = style.font;
                 ctx.fillStyle = style.color;
-                ctx.fillText(lyric.text, 60 * fontScale, index * lyricLineHeight);
+                ctx.globalAlpha = style.opacity;
+
+                if (ctx.globalAlpha > 0) {
+                    const x = 60 * scaleFactor;
+                    const y = index * lyricLineHeight;
+                    const transformMatch = style.transform.match(/rotate\(([^)]+)deg\)/);
+                    const rotationDegrees = transformMatch ? parseFloat(transformMatch[1]) : 0;
+                    const rotationRadians = rotationDegrees * Math.PI / 180;
+                    
+                    ctx.save();
+                    ctx.translate(x, y);
+                    ctx.rotate(rotationRadians);
+                    ctx.fillText(lyric.text, 0, 0);
+                    ctx.restore();
+                }
             });
+
+            ctx.globalAlpha = 1;
             ctx.restore();
-        } else { // 9:16 and 1:1 portrait-style layout
-            const topAreaHeight = canvas.height * 0.5;
-            const bottomAreaHeight = canvas.height * 0.5;
-            const albumArtSize = Math.min(canvas.width * 0.55, topAreaHeight * 0.55);
-            const albumX = (canvas.width - albumArtSize) / 2;
-            const albumY = (topAreaHeight - albumArtSize) / 2;
-
-            ctx.save();
-            ctx.shadowColor = 'rgba(0, 0, 0, 0.4)'; ctx.shadowBlur = 15; ctx.shadowOffsetX = 4; ctx.shadowOffsetY = 8;
-            ctx.drawImage(albumImage, albumX, albumY, albumArtSize, albumArtSize);
-            ctx.restore();
-
-            ctx.fillStyle = 'white'; ctx.textAlign = 'center';
-            ctx.font = `700 ${24 * fontScale}px ${fontFamily}`;
-            ctx.fillText(songTitle, canvas.width / 2, albumY + albumArtSize + (40 * fontScale), canvas.width * 0.9);
-            
-            ctx.fillStyle = '#E5E7EB'; ctx.font = `500 ${20 * fontScale}px ${fontFamily}`;
-            ctx.fillText(artistName, canvas.width / 2, albumY + albumArtSize + (70 * fontScale), canvas.width * 0.9);
-
-            const lyricClipY = topAreaHeight;
-            const lyricCenterY = lyricClipY + (bottomAreaHeight / 2);
-            const targetTranslateY = lyricCenterY - (canvasCurrentIndex * lyricLineHeight) - lyricLineHeight / 2;
+        } else {
+             // --- Lyrics Drawing (without album art, centered) ---
+            const targetTranslateY = canvas.height / 2 - (canvasCurrentIndex * lyricLineHeight) - lyricLineHeight / 2;
             currentCanvasTranslateY += (targetTranslateY - currentCanvasTranslateY) * 0.1;
 
             ctx.save();
-            ctx.rect(0, lyricClipY, canvas.width, bottomAreaHeight); ctx.clip();
-            ctx.translate(0, currentCanvasTranslateY); ctx.textAlign = 'center';
+            ctx.translate(0, currentCanvasTranslateY);
+            ctx.textAlign = 'center';
             
             lyricsToRender.forEach((lyric, index) => {
-                const style = getLyricStyle(index, canvasCurrentIndex, fontScale);
-                ctx.font = style.font!; ctx.globalAlpha = style.opacity!;
+                const style = getLyricStyle(index, canvasCurrentIndex, exportFontSize);
+                ctx.font = style.font;
                 ctx.fillStyle = style.color;
-                ctx.fillText(lyric.text, canvas.width / 2, index * lyricLineHeight);
+                ctx.globalAlpha = style.opacity;
+
+                if (ctx.globalAlpha > 0) {
+                   const x = canvas.width / 2;
+                   const y = index * lyricLineHeight;
+                   const transformMatch = style.transform.match(/rotate\(([^)]+)deg\)/);
+                   const rotationDegrees = transformMatch ? parseFloat(transformMatch[1]) : 0;
+                   const rotationRadians = rotationDegrees * Math.PI / 180;
+                   
+                   ctx.save();
+                   ctx.translate(x, y);
+                   ctx.rotate(rotationRadians);
+                   ctx.fillText(lyric.text, 0, 0);
+                   ctx.restore();
+                }
             });
+
+            ctx.globalAlpha = 1;
             ctx.restore();
         }
-        // --- End Drawing ---
 
+        // --- End Drawing ---
         animationFrameId = requestAnimationFrame(drawFrame);
       };
       animationFrameId = requestAnimationFrame(drawFrame);
@@ -446,109 +626,49 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   };
   
   const durationValue = audioRef.current?.duration || 0;
-  
-  const getLyricStyle = (index: number, currentIdx?: number, fontScale = 1) => {
-    const activeIndex = currentIdx !== undefined ? currentIdx : currentIndex;
-    const isActiveIndexDummy = activeIndex < 2 || activeIndex > timedLyrics.length + 1;
-    const style: { 
-        transition?: string; fontFamily: string; fontWeight: number;
-        textShadow?: string; opacity?: number; transform?: string;
-        fontSize?: string; color: string; font?: string;
-    } = {
-        transition: 'transform 0.5s ease-out, opacity 0.5s ease-out, font-size 0.5s ease-out, color 0.5s ease-out',
-        fontFamily: fontFamily, fontWeight: 500,
-        textShadow: '2px 2px 5px rgba(0,0,0,0.5)', color: '#D1D5DB',
-    };
-
-    let calculatedFontSize: number;
-    if (index === activeIndex) {
-        calculatedFontSize = fontSize;
-        style.opacity = isActiveIndexDummy ? 0 : 1;
-        style.transform = 'scale(1)';
-        style.color = '#FFFFFF';
-        style.fontWeight = 700;
-    } else if (!isActiveIndexDummy && (index === activeIndex - 1 || index === activeIndex + 1)) {
-        calculatedFontSize = fontSize * 0.7;
-        style.opacity = 0.6;
-        style.transform = 'scale(0.9)';
-        style.color = '#E5E7EB';
-    } else {
-        calculatedFontSize = fontSize * 0.6;
-        style.opacity = 0;
-        style.transform = 'scale(0.8)';
-        style.color = '#D1D5DB';
-    }
-    
-    style.fontSize = `${calculatedFontSize}px`;
-    style.font = `${style.fontWeight} ${calculatedFontSize * fontScale}px ${style.fontFamily}`;
-
-    return style;
-  }
-  
-  const aspectRatioClass = {
-    '16:9': 'aspect-video',
-    '9:16': 'aspect-[9/16] max-h-[70vh] mx-auto',
-    '1:1': 'aspect-square max-h-[70vh] mx-auto'
-  }[aspectRatio];
-
-  const previewLayoutClass = {
-    '16:9': 'flex-row p-4 sm:p-8',
-    '9:16': 'flex-col p-4 sm:p-6',
-    '1:1': 'flex-col p-4 sm:p-6'
-  }[aspectRatio];
-
-  const lyricsContainerClass = {
-     '16:9': 'w-3/5 h-full',
-     '9:16': 'w-full h-1/2 order-2',
-     '1:1': 'w-full h-1/2 order-2'
-  }[aspectRatio];
-
-  const albumContainerClass = {
-    '16:9': 'w-2/5 h-full pl-4',
-    '9:16': 'w-full h-1/2 order-1 items-center justify-end pb-4',
-    '1:1': 'w-full h-1/2 order-1 items-center justify-end pb-4'
-  }[aspectRatio];
+  const currentTheme = colorThemes[colorTheme];
 
   return (
     <>
-      {exportProgress && <Loader message={exportProgress.message} progress={exportProgress.progress} onCancel={handleCancelExport} />}
+      {exportProgress && <Loader message={exportProgress.message} progress={exportProgress.progress} details={exportProgress.details} onCancel={handleCancelExport} />}
       <div className="w-full max-w-5xl mx-auto">
         <audio ref={audioRef} src={audioUrl} onLoadedMetadata={() => setCurrentTime(0)} />
         
         {/* Video Preview Area */}
-        <div className={`w-full ${aspectRatioClass} bg-gray-900 rounded-xl shadow-2xl ring-1 ring-white/10 relative overflow-hidden mb-4 transition-all duration-300`}>
+        <div className="w-full aspect-video bg-gray-900 rounded-xl shadow-2xl ring-1 ring-white/10 relative overflow-hidden mb-4">
           <img src={imageUrl} alt="背景" className="absolute inset-0 w-full h-full object-cover z-0 filter blur-xl scale-110" />
           <div className="absolute inset-0 bg-black/40" />
-          <div style={{ backgroundImage: `url(${noiseTexture})` }} className="absolute inset-0 z-0" />
-
-           <div className={`relative z-10 w-full h-full flex items-center ${previewLayoutClass}`}>
+          
+           <div className="relative z-10 w-full h-full flex p-4 sm:p-8 items-center">
               {/* Lyrics Column */}
-              <div className={`flex flex-col justify-center items-start overflow-hidden ${lyricsContainerClass}`}>
+              <div className={`h-full flex flex-col justify-center overflow-hidden transition-all duration-500 ease-in-out ${includeAlbumArt ? 'w-3/5 items-start' : 'w-full items-center'}`}>
                 <div 
                     ref={lyricsContainerRef} 
-                    className="w-full transition-transform duration-500 ease-in-out"
+                    className={`transition-transform duration-500 ease-in-out ${includeAlbumArt ? 'w-full' : 'w-auto'} transition-opacity ${hasPlaybackStarted ? 'opacity-100' : 'opacity-0'}`}
                 >
                     {lyricsToRender.map((lyric, index) => (
                         <p
                             key={index}
                             ref={el => { lyricRefs.current[index] = el; }}
-                            className={`w-full p-2 tracking-wide leading-tight ${aspectRatio !== '16:9' ? 'text-center' : ''}`}
+                            className={`px-2 py-6 tracking-wide leading-relaxed whitespace-nowrap ${includeAlbumArt ? '' : 'text-center'}`}
                             style={getLyricStyle(index)}
                         >
-                            {lyric.text || '\u00A0' /* Non-breaking space */}
+                            {lyric.text || '\u00A0' /* Non-breaking space for empty/dummy lines */}
                         </p>
                     ))}
                 </div>
               </div>
 
-              {/* Album Art & Info Column */}
-              <div className={`flex flex-col justify-center ${albumContainerClass}`}>
-                <img src={imageUrl} alt="專輯封面" className="w-full max-w-[250px] aspect-square object-cover rounded-xl shadow-xl ring-1 ring-white/10" />
-                <div className="text-center mt-4 p-2 text-white w-full max-w-[250px]">
-                    <p className="font-bold text-lg truncate" title={songTitle}>{songTitle}</p>
-                    <p className="text-gray-300 truncate" title={artistName}>{artistName}</p>
-                </div>
-              </div>
+              {/* Album Art Column (Conditional) */}
+               {includeAlbumArt && (
+                  <div className="w-2/5 h-full flex flex-col justify-center items-center pl-4">
+                    <img src={imageUrl} alt="專輯封面" className="w-full max-w-[280px] aspect-square object-cover bg-black/20 rounded-xl shadow-2xl ring-1 ring-white/10" />
+                    <div className="text-center mt-4 p-2 w-full max-w-[280px]">
+                        <p className="font-bold text-lg truncate" title={songTitle} style={{ color: currentTheme.info }}>{songTitle}</p>
+                        <p className="truncate" title={artistName} style={{ color: currentTheme.subInfo }}>{artistName}</p>
+                    </div>
+                  </div>
+               )}
             </div>
         </div>
 
@@ -557,7 +677,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
           <div className="w-full flex items-center gap-4">
             <span className="text-white text-sm font-mono">{formatTime(currentTime)}</span>
             <input
-              type="range" min="0" max={durationValue} value={currentTime} onChange={handleTimelineChange}
+              type="range"
+              min="0"
+              max={durationValue}
+              value={currentTime}
+              onChange={handleTimelineChange}
               className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-[#a6a6a6]"
             />
             <span className="text-white text-sm font-mono">{formatTime(durationValue)}</span>
@@ -565,36 +689,83 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
           <div className="flex items-center justify-between mt-4 flex-wrap gap-2">
               <button onClick={onBack} className="flex items-center gap-2 text-gray-300 hover:text-white transition-colors text-sm sm:text-base">
                   <PrevIcon className="w-6 h-6" />
-                  返回編輯
+                  返回
               </button>
               <button onClick={handlePlayPause} className="bg-white text-gray-900 rounded-full p-3 transform hover:scale-110 transition-transform">
                   {isPlaying ? <PauseIcon className="w-6 h-6" /> : <PlayIcon className="w-6 h-6" />}
               </button>
               <div className="flex items-center gap-2 sm:gap-4 flex-wrap justify-end">
                 <div className="flex items-center gap-2 text-white">
+                    <label htmlFor="animation-style" className="text-xs">動畫</label>
+                    <select
+                        id="animation-style"
+                        value={animationStyle}
+                        onChange={(e) => setAnimationStyle(e.target.value)}
+                        className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-500"
+                    >
+                        <option value="disc">圓盤</option>
+                        <option value="vertical">垂直</option>
+                    </select>
+                </div>
+                <div className="flex items-center gap-2 text-white">
                     <label htmlFor="font-size" className="text-xs">大小</label>
-                    <input id="font-size" type="range" min="24" max="80" value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))} className="w-20 h-1.5 bg-white/30 rounded-full appearance-none cursor-pointer accent-[#a6a6a6]" />
+                    <input
+                        id="font-size"
+                        type="range"
+                        min="16"
+                        max="80"
+                        value={fontSize}
+                        onChange={(e) => setFontSize(Number(e.target.value))}
+                        className="w-20 h-1.5 bg-white/30 rounded-full appearance-none cursor-pointer accent-[#a6a6a6]"
+                    />
                 </div>
                 <div className="flex items-center gap-2 text-white">
                     <label htmlFor="font-family" className="text-xs">字體</label>
-                    <select id="font-family" value={fontFamily} onChange={(e) => setFontFamily(e.target.value)} className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-500">
-                        {fontOptions.map(opt => <option key={opt.value} value={opt.value} style={{ fontFamily: opt.value }}>{opt.name}</option>)}
+                    <select
+                        id="font-family"
+                        value={fontFamily}
+                        onChange={(e) => setFontFamily(e.target.value)}
+                        className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-500"
+                    >
+                        {fontOptions.map(opt => (
+                            <option key={opt.value} value={opt.value} style={{ fontFamily: opt.value }}>{opt.name}</option>
+                        ))}
+                    </select>
+                </div>
+                <div className="flex items-center gap-2 text-white">
+                    <label htmlFor="color-theme" className="text-xs">主題</label>
+                    <select
+                        id="color-theme"
+                        value={colorTheme}
+                        onChange={(e) => setColorTheme(e.target.value)}
+                        className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-500"
+                    >
+                        {Object.entries(colorThemes).map(([key, theme]) => (
+                            <option key={key} value={key}>{theme.name}</option>
+                        ))}
                     </select>
                 </div>
                  <div className="flex items-center gap-2 text-white">
-                    <label htmlFor="aspect-ratio" className="text-xs">比例</label>
-                    <select id="aspect-ratio" value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value)} className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-500">
-                        <option value="16:9">16:9 (橫向)</option>
-                        <option value="9:16">9:16 (直向)</option>
-                        <option value="1:1">1:1 (方形)</option>
+                    <label htmlFor="resolution" className="text-xs">解析度</label>
+                    <select
+                        id="resolution"
+                        value={resolution}
+                        onChange={(e) => setResolution(e.target.value)}
+                        className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-500"
+                    >
+                        <option value="720p">720p (1280x720)</option>
+                        <option value="1080p">1080p (1920x1080)</option>
                     </select>
                 </div>
                  <div className="flex items-center gap-2 text-white">
-                    <label htmlFor="resolution" className="text-xs">畫質</label>
-                    <select id="resolution" value={resolution} onChange={(e) => setResolution(e.target.value)} className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-500">
-                        <option value="720p">720p (HD)</option>
-                        <option value="1080p">1080p (Full HD)</option>
-                    </select>
+                    <input
+                        id="include-album-art"
+                        type="checkbox"
+                        checked={includeAlbumArt}
+                        onChange={(e) => setIncludeAlbumArt(e.target.checked)}
+                        className="w-4 h-4 rounded bg-gray-900/50 border-gray-600 text-[#a6a6a6] focus:ring-[#a6a6a6] focus:ring-offset-gray-800"
+                    />
+                    <label htmlFor="include-album-art" className="text-xs cursor-pointer">包含封面</label>
                 </div>
                 <button onClick={handleExportSrt} className="px-3 py-2 text-sm bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-500 transition">
                     導出 SRT
