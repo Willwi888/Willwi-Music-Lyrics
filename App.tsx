@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import LyricsTiming from './components/LyricsTiming';
+import LyricsTiming from './components/LyricsTiming.tsx';
 import VideoPlayer from './components/VideoPlayer';
 import MusicIcon from './components/icons/MusicIcon';
 import ImageIcon from './components/icons/ImageIcon';
