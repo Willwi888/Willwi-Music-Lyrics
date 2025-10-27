@@ -68,6 +68,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   const [resolution, setResolution] = useState('720p');
   const [includeAlbumArt, setIncludeAlbumArt] = useState(true);
   const [animationStyle, setAnimationStyle] = useState('disc'); // 'disc' or 'vertical'
+  const [lyricAnimationStyle, setLyricAnimationStyle] = useState('zoom'); // 'zoom', 'slide', or 'fade'
   const [hasPlaybackStarted, setHasPlaybackStarted] = useState(false);
   const isExportCancelled = useRef(false);
   
@@ -327,8 +328,31 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         break;
     }
     
+    const transformParts = [];
+
+    switch (lyricAnimationStyle) {
+        case 'zoom':
+            transformParts.push(`scale(${scale})`);
+            break;
+        case 'slide':
+            let translateY = '0px';
+            if (distance > 0) {
+                translateY = index > activeIndex ? `${15 * distance}px` : `-${15 * distance}px`;
+            }
+            transformParts.push(`translateY(${translateY})`);
+            transformParts.push(`scale(${distance === 0 ? 1 : 0.9})`);
+            break;
+        case 'fade':
+            // No transform for fade, relies on opacity and font size change
+            break;
+    }
+
+    if (rotation !== 0) {
+        transformParts.push(`rotate(${rotation}deg)`);
+    }
+
+    style.transform = transformParts.join(' ');
     style.fontSize = `${calculatedFontSize}px`;
-    style.transform = `scale(${scale}) rotate(${rotation}deg)`;
     style.font = `${style.fontWeight} ${calculatedFontSize}px ${style.fontFamily}`;
 
     return style;
@@ -554,7 +578,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
             ctx.rect(0, 0, leftColWidth, canvas.height);
             ctx.clip();
             ctx.translate(0, currentCanvasTranslateY);
-            ctx.textAlign = 'left';
             
             lyricsToRender.forEach((lyric, index) => {
                 const style = getLyricStyle(index, canvasCurrentIndex, exportFontSize);
@@ -569,8 +592,12 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                     const rotationDegrees = transformMatch ? parseFloat(transformMatch[1]) : 0;
                     const rotationRadians = rotationDegrees * Math.PI / 180;
                     
+                    const translateYMatch = style.transform.match(/translateY\(([-.0-9]+)px\)/);
+                    const translateYValue = translateYMatch ? parseFloat(translateYMatch[1]) : 0;
+
                     ctx.save();
-                    ctx.translate(x, y);
+                    ctx.textAlign = 'left';
+                    ctx.translate(x, y + (translateYValue * scaleFactor));
                     ctx.rotate(rotationRadians);
                     ctx.fillText(lyric.text, 0, 0);
                     ctx.restore();
@@ -586,7 +613,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
 
             ctx.save();
             ctx.translate(0, currentCanvasTranslateY);
-            ctx.textAlign = 'center';
             
             lyricsToRender.forEach((lyric, index) => {
                 const style = getLyricStyle(index, canvasCurrentIndex, exportFontSize);
@@ -600,9 +626,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                    const transformMatch = style.transform.match(/rotate\(([^)]+)deg\)/);
                    const rotationDegrees = transformMatch ? parseFloat(transformMatch[1]) : 0;
                    const rotationRadians = rotationDegrees * Math.PI / 180;
+
+                   const translateYMatch = style.transform.match(/translateY\(([-.0-9]+)px\)/);
+                   const translateYValue = translateYMatch ? parseFloat(translateYMatch[1]) : 0;
                    
                    ctx.save();
-                   ctx.translate(x, y);
+                   ctx.textAlign = 'center';
+                   ctx.translate(x, y + (translateYValue * scaleFactor));
                    ctx.rotate(rotationRadians);
                    ctx.fillText(lyric.text, 0, 0);
                    ctx.restore();
@@ -696,7 +726,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
               </button>
               <div className="flex items-center gap-2 sm:gap-4 flex-wrap justify-end">
                 <div className="flex items-center gap-2 text-white">
-                    <label htmlFor="animation-style" className="text-xs">動畫</label>
+                    <label htmlFor="animation-style" className="text-xs">版面</label>
                     <select
                         id="animation-style"
                         value={animationStyle}
@@ -705,6 +735,19 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                     >
                         <option value="disc">圓盤</option>
                         <option value="vertical">垂直</option>
+                    </select>
+                </div>
+                <div className="flex items-center gap-2 text-white">
+                    <label htmlFor="lyric-animation-style" className="text-xs">歌詞動畫</label>
+                    <select
+                        id="lyric-animation-style"
+                        value={lyricAnimationStyle}
+                        onChange={(e) => setLyricAnimationStyle(e.target.value)}
+                        className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-500"
+                    >
+                        <option value="zoom">縮放</option>
+                        <option value="slide">滑入</option>
+                        <option value="fade">淡入</option>
                     </select>
                 </div>
                 <div className="flex items-center gap-2 text-white">
