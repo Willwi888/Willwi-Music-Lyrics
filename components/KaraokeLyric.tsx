@@ -7,9 +7,20 @@ interface KaraokeLyricProps {
   currentTime: number;
   isPlaying: boolean;
   style?: React.CSSProperties;
+  activeColor?: string;
+  inactiveColor?: string;
 }
 
-const KaraokeLyric: React.FC<KaraokeLyricProps> = ({ text, startTime, endTime, currentTime, isPlaying, style }) => {
+const KaraokeLyric: React.FC<KaraokeLyricProps> = ({ 
+  text, 
+  startTime, 
+  endTime, 
+  currentTime, 
+  isPlaying, 
+  style,
+  activeColor = '#FFFFFF',
+  inactiveColor = '#9ca3af'
+}) => {
   const duration = (endTime - startTime) * 1000;
   // Negative delay makes the animation jump to the correct progress if we start mid-lyric
   const delay = (startTime - currentTime) * 1000;
@@ -17,7 +28,7 @@ const KaraokeLyric: React.FC<KaraokeLyricProps> = ({ text, startTime, endTime, c
   const animationStyle: React.CSSProperties = {
     ...style,
     opacity: 0, // Start with opacity 0 for fade-in animation to take effect
-    backgroundImage: `linear-gradient(to right, #FFFFFF 50%, #9ca3af 50%)`,
+    backgroundImage: `linear-gradient(to right, ${activeColor} 50%, ${inactiveColor} 50%)`,
     backgroundSize: '200% 100%',
     backgroundPosition: '100%',
     WebkitBackgroundClip: 'text',

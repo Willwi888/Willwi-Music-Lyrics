@@ -317,23 +317,23 @@ const App: React.FC = () => {
             <div className="text-center">
               <MusicIcon className="w-12 h-12 mx-auto text-gray-400" />
               <h2 className="mt-4 text-3xl font-bold tracking-tight text-white">
-                歌詞影片創作工具
+                三分鐘泡麵歌詞 MV
               </h2>
               <p className="mt-2 text-sm text-gray-400">
-                上傳您的音樂作品與歌詞，開始製作專屬的動態歌詞 MV。
+                上傳你的「泡麵音樂」與歌詞，三分鐘煮出專屬動態歌詞 MV！
               </p>
             </div>
             <form onSubmit={handleStartTiming} className="space-y-6">
                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label htmlFor="song-title" className="block text-sm font-medium text-gray-300 mb-2">
-                    歌曲名稱
+                    歌曲口味名稱
                   </label>
                   <input
                     type="text"
                     id="song-title"
                     className="block w-full px-3 py-2 bg-gray-900/50 border border-gray-600 rounded-md shadow-sm placeholder-gray-500 focus:outline-none focus:ring-gray-500 focus:border-gray-500 sm:text-sm text-white"
-                    placeholder="請輸入歌曲名稱"
+                    placeholder="請輸入這碗歌的名字"
                     value={songTitle}
                     onChange={(e) => setSongTitle(e.target.value)}
                     required
@@ -341,13 +341,13 @@ const App: React.FC = () => {
                 </div>
                 <div>
                   <label htmlFor="artist-name" className="block text-sm font-medium text-gray-300 mb-2">
-                    歌手名稱
+                    主廚名稱（歌手）
                   </label>
                   <input
                     type="text"
                     id="artist-name"
                     className="block w-full px-3 py-2 bg-gray-900/50 border border-gray-600 rounded-md shadow-sm placeholder-gray-500 focus:outline-none focus:ring-gray-500 focus:border-gray-500 sm:text-sm text-white"
-                    placeholder="請輸入歌手名稱"
+                    placeholder="請輸入主廚大名"
                     value={artistName}
                     onChange={(e) => setArtistName(e.target.value)}
                     required
@@ -357,7 +357,7 @@ const App: React.FC = () => {
               <div>
                  <div className="flex justify-between items-center mb-2">
                     <label htmlFor="lyrics" className="block text-sm font-medium text-gray-300">
-                        歌詞
+                        歌詞配料區
                     </label>
                     <button
                       type="button"
@@ -378,7 +378,7 @@ const App: React.FC = () => {
                   id="lyrics"
                   rows={8}
                   className="block w-full px-3 py-2 bg-gray-900/50 border border-gray-600 rounded-md shadow-sm placeholder-gray-500 focus:outline-none focus:ring-gray-500 focus:border-gray-500 sm:text-sm text-white"
-                  placeholder="請在此貼上您的歌詞..."
+                  placeholder="請在此貼上你的歌詞配方..."
                   value={lyricsText}
                   onChange={handleLyricsTextChange}
                   required
@@ -387,7 +387,7 @@ const App: React.FC = () => {
 
               {/* Audio Input */}
               <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">音訊檔案 (必要)</label>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">主湯音訊檔（必加）</label>
                   <div className="flex border-b border-gray-700 mb-2">
                       <TabButton active={audioInputMethod === 'upload'} onClick={() => setAudioInputMethod('upload')}>上傳檔案</TabButton>
                       <TabButton active={audioInputMethod === 'link'} onClick={() => setAudioInputMethod('link')}>使用連結</TabButton>
@@ -401,9 +401,10 @@ const App: React.FC = () => {
                                       <span>上傳檔案</span>
                                       <input id="audio-upload" name="audio-upload" type="file" className="sr-only" accept="audio/*" onChange={(e) => setAudioFile(e.target.files?.[0] || null)} />
                                   </label>
-                                  <p className="pl-1">或拖曳至此</p>
+                                  <p className="pl-1">或直接拖曳進鍋裡</p>
                               </div>
-                              <p className="text-xs text-gray-500">{audioFile ? audioFile.name : 'MP3, WAV, FLAC, etc.'}</p>
+                              <p className="text-xs text-gray-500">{audioFile ? audioFile.name : '未選擇任何主湯'}</p>
+                              <p className="text-xs text-gray-600">MP3, WAV, FLAC, etc.</p>
                           </div>
                       </div>
                   ) : (
@@ -422,7 +423,7 @@ const App: React.FC = () => {
               
               {/* Image Input */}
               <div>
-                  <label className="block text-sm font-medium text-gray-300 mb-2">專輯/背景圖片 (可選)</label>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">專輯／背景佐料（可選）</label>
                   <div className="flex border-b border-gray-700 mb-2">
                       <TabButton active={imageInputMethod === 'upload'} onClick={() => setImageInputMethod('upload')}>上傳檔案</TabButton>
                       <TabButton active={imageInputMethod === 'link'} onClick={() => setImageInputMethod('link')}>使用連結</TabButton>
@@ -438,7 +439,8 @@ const App: React.FC = () => {
                                   </label>
                                   <p className="pl-1">或拖曳至此</p>
                               </div>
-                              <p className="text-xs text-gray-500">{backgroundImage ? backgroundImage.name : 'PNG, JPG, GIF'}</p>
+                              <p className="text-xs text-gray-500">{backgroundImage ? backgroundImage.name : '未選擇任何佐料圖片'}</p>
+                              <p className="text-xs text-gray-600">PNG, JPG, GIF</p>
                           </div>
                       </div>
                   ) : (
@@ -461,13 +463,14 @@ const App: React.FC = () => {
                   disabled={!isFormValid}
                   className="w-full flex justify-center py-3 px-4 border border-white/50 rounded-md shadow-sm text-sm font-bold text-gray-900 bg-[#a6a6a6] hover:bg-[#999999] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-gray-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                 >
-                  {timedLyrics.length > 0 ? '完成並預覽' : '開始對時'}
+                  {timedLyrics.length > 0 ? '完成並預覽' : '開始對時！開火！'}
                 </button>
+                <p className="text-xs text-gray-500 mt-2 text-center">（對準每句歌詞的沸點）</p>
               </div>
             </form>
             <div className="mt-6 pt-4 border-t border-gray-700 text-center text-xs text-gray-500">
-              <h4 className="font-semibold text-gray-400 mb-1">行動裝置使用建議</h4>
-              <p>建議使用電腦以獲得最佳體驗，特別是影片匯出功能。若使用手機，建議橫向操作以便對時。</p>
+              <h4 className="font-semibold text-gray-400 mb-1">行動裝置操作建議</h4>
+              <p>建議使用電腦煮麵，影片匯出更順滑。若使用手機，橫向操作比較不會翻鍋。</p>
             </div>
           </div>
         );
