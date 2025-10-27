@@ -181,8 +181,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         const activeLyricElement = lyricRefs.current[scrollCurrentIndex]!;
         const parentScroller = container.parentElement;
         if (parentScroller) {
-          // Adjust the offset to center the lyrics in the top third of the screen, leaving space for the disc
-          const newTransform = `translateY(${parentScroller.offsetHeight / 3 - activeLyricElement.offsetTop - activeLyricElement.offsetHeight / 2}px)`;
+          // Adjust the offset to center the lyrics in the parent container
+          const newTransform = `translateY(${parentScroller.offsetHeight / 2 - activeLyricElement.offsetTop - activeLyricElement.offsetHeight / 2}px)`;
           container.style.transform = newTransform;
         }
     }
@@ -299,7 +299,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         const recordedBlob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
         const ffmpeg = createFFmpeg({
             log: false,
-            corePath: 'https://unpkg.com/@ffmpeg/core-st@0.11.0/dist/ffmpeg-core.js',
+            corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core-st@0.11.0/dist/ffmpeg-core.js',
         });
         ffmpegRef.current = ffmpeg;
         
@@ -382,7 +382,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     try {
         const ffmpeg = createFFmpeg({
             log: true,
-            corePath: 'https://unpkg.com/@ffmpeg/core-st@0.11.0/dist/ffmpeg-core.js',
+            corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core-st@0.11.0/dist/ffmpeg-core.js',
         });
         ffmpegRef.current = ffmpeg;
         
@@ -523,10 +523,22 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
             <div className={`absolute inset-0 bg-black transition-opacity duration-500 ${animationStyle === 'karaoke' && !showInfo ? 'opacity-50' : 'opacity-70'}`}></div>
 
             {animationStyle === 'scroll' ? (
-                <div className="w-full h-full flex flex-col items-center justify-end relative pb-8 overflow-hidden">
-                    {/* Lyrics scroller */}
-                    <div className="absolute top-0 left-0 w-full h-2/3 overflow-hidden mask-gradient">
-                        <div ref={lyricsContainerRef} className="relative transition-transform duration-500 ease-out">
+                <div className="w-full h-full flex items-center justify-center p-8 gap-12">
+                    {/* Left: Spinning Disc & Info */}
+                    <div className="w-2/5 flex flex-col items-center justify-center flex-shrink-0">
+                        <div className="relative w-full aspect-square max-w-sm">
+                            <div className={`absolute inset-0 bg-center bg-no-repeat ${isPlaying ? 'animate-spin-slow' : ''}`} style={{ backgroundImage: 'url(https://storage.googleapis.com/aistudio-hosting/workspace-template-assets/lyric-video-maker/vinyl.png)', backgroundSize: 'contain', animationPlayState: isPlaying ? 'running' : 'paused' }}></div>
+                            <img src={imageUrl} alt="專輯封面" className="absolute w-[55%] h-[55%] object-cover rounded-full top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+                        </div>
+                        <div className="text-center mt-6">
+                            <h2 className="text-3xl font-bold truncate" style={{ color: themeColors.info }}>{songTitle}</h2>
+                            <p className="text-xl opacity-80" style={{ color: themeColors.subInfo }}>{artistName}</p>
+                        </div>
+                    </div>
+
+                    {/* Right: Lyrics Scroller */}
+                    <div className="w-3/5 h-[80%] relative overflow-hidden mask-gradient">
+                        <div ref={lyricsContainerRef} className="absolute top-0 left-0 w-full transition-transform duration-500 ease-out">
                         {lyricsToRender.map((lyric, index) => {
                             const distance = Math.abs(scrollCurrentIndex - index);
                             const isActive = scrollCurrentIndex === index;
@@ -561,17 +573,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                                 </p>
                             );
                         })}
-                        </div>
-                    </div>
-                     {/* Spinning Disc and Info */}
-                    <div className="relative flex flex-col items-center justify-center z-10 w-1/2 mt-auto">
-                        <div className="relative w-full aspect-square max-w-xs">
-                           <div className={`absolute inset-0 bg-center bg-no-repeat ${isPlaying ? 'animate-spin-slow' : ''}`} style={{ backgroundImage: 'url(https://storage.googleapis.com/aistudio-hosting/workspace-template-assets/lyric-video-maker/vinyl.png)', backgroundSize: 'contain', animationPlayState: isPlaying ? 'running' : 'paused' }}></div>
-                           <img src={imageUrl} alt="專輯封面" className="absolute w-[55%] h-[55%] object-cover rounded-full top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
-                        </div>
-                        <div className="text-center mt-4">
-                            <h2 className="text-2xl font-bold truncate" style={{ color: themeColors.info }}>{songTitle}</h2>
-                            <p className="text-lg opacity-80" style={{ color: themeColors.subInfo }}>{artistName}</p>
                         </div>
                     </div>
                 </div>
