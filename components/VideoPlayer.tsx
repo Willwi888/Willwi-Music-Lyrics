@@ -4,7 +4,8 @@ import PlayIcon from './icons/PlayIcon';
 import PauseIcon from './icons/PauseIcon';
 import PrevIcon from './icons/PrevIcon';
 import Loader from './Loader';
-import AnimatedLyric from './AnimatedLyric';
+import DiscAnimatedLyric from './DiscAnimatedLyric';
+import VerticalAnimatedLyric from './VerticalAnimatedLyric';
 
 // Fix: Declare FFmpeg as a global variable to resolve the "Cannot find name 'FFmpeg'" error. This assumes FFmpeg is loaded via an external script.
 declare var FFmpeg: any;
@@ -43,7 +44,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   const [infoColor, setInfoColor] = useState('#FFFFFF');
   const [subInfoColor, setSubInfoColor] = useState('#E5E7EB');
   const [layoutStyle, setLayoutStyle] = useState<'left' | 'right'>('left');
-  
+  const [animationStyle, setAnimationStyle] = useState<'disc' | 'vertical'>('disc');
+
   const isExportCancelled = useRef(false);
   const ffmpegRef = useRef<any>(null);
 
@@ -413,7 +415,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                 <div className="w-2/5 flex flex-col items-center justify-center flex-shrink-0">
                     <div className="relative w-full aspect-square max-w-sm">
                         <div className={`absolute inset-0 bg-center bg-no-repeat ${isPlaying ? 'animate-spin-slow' : ''}`} style={{ backgroundImage: 'url(https://storage.googleapis.com/aistudio-hosting/workspace-template-assets/lyric-video-maker/vinyl.png)', backgroundSize: 'contain', animationPlayState: isPlaying ? 'running' : 'paused' }}></div>
-                        <img src={imageUrl} alt="專輯封面" className="absolute w-[55%] h-[55%] object-cover rounded-full top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" crossOrigin="anonymous" />
+                        <img src={imageUrl} alt="專輯封面" className="absolute w-[55%] h-[55%] object-cover rounded-lg top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" crossOrigin="anonymous" />
                     </div>
                     <div className="text-center mt-6">
                         <h2 className="text-3xl font-bold truncate" style={{ color: infoColor }}>{songTitle}</h2>
@@ -421,29 +423,27 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                     </div>
                 </div>
 
-                <div className="w-3/5 h-[80%] relative">
-                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-64">
-                    {activeLyric && (
-                      <AnimatedLyric
-                        key={activeLyric.startTime}
-                        text={activeLyric.text}
-                        type="active"
+                <div className="w-3/5 h-[80%] relative flex items-center justify-center">
+                  {animationStyle === 'disc' ? (
+                     <DiscAnimatedLyric
+                        timedLyrics={timedLyrics}
+                        activeLyricIndex={activeLyricIndex}
                         fontSize={fontSize}
                         fontFamily={fontFamily}
-                        color={activeLyricColor}
+                        activeColor={activeLyricColor}
+                        nextColor={nextLyricColor}
                       />
-                    )}
-                    {nextLyric && (
-                      <AnimatedLyric
-                        key={nextLyric.startTime}
-                        text={nextLyric.text}
-                        type="next"
+                  ) : (
+                      <VerticalAnimatedLyric
+                        key={`${activeLyric?.startTime}-${nextLyric?.startTime}`}
+                        activeLyric={activeLyric}
+                        nextLyric={nextLyric}
                         fontSize={fontSize}
                         fontFamily={fontFamily}
-                        color={nextLyricColor}
+                        activeColor={activeLyricColor}
+                        nextColor={nextLyricColor}
                       />
-                    )}
-                  </div>
+                  )}
                 </div>
             </div>
         </div>
@@ -481,6 +481,23 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
             </div>
 
             <div className="space-y-4 border-t border-gray-700 pt-6">
+               <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">歌詞動畫風格</label>
+                  <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => setAnimationStyle('disc')}
+                        className={`py-2 rounded-md text-center text-sm border-2 transition-colors ${animationStyle === 'disc' ? 'bg-gray-600 border-gray-500' : 'bg-gray-700 border-transparent hover:bg-gray-600/50'}`}
+                      >
+                        圓盤
+                      </button>
+                      <button
+                        onClick={() => setAnimationStyle('vertical')}
+                        className={`py-2 rounded-md text-center text-sm border-2 transition-colors ${animationStyle === 'vertical' ? 'bg-gray-600 border-gray-500' : 'bg-gray-700 border-transparent hover:bg-gray-600/50'}`}
+                      >
+                        垂直
+                      </button>
+                  </div>
+              </div>
                <div>
                   <label htmlFor="font-size" className="block text-sm font-medium text-gray-300 mb-2">字體大小 ({fontSize}px)</label>
                   <input

@@ -96,30 +96,108 @@ const App: React.FC = () => {
   const [isAiGeneratorUnlocked, setIsAiGeneratorUnlocked] = useState(false);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
 
+  const [audioBlobUrl, setAudioBlobUrl] = useState('');
+  const [imageBlobUrl, setImageBlobUrl] = useState('');
+  const [isAudioLoading, setIsAudioLoading] = useState(false);
+  const [isImageLoading, setIsImageLoading] = useState(false);
+  const [audioFetchError, setAudioFetchError] = useState('');
+  const [imageFetchError, setImageFetchError] = useState('');
+
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
+  useEffect(() => {
+    if (audioInputMethod === 'link' && audioUrlInput) {
+      const convertedUrl = convertGoogleDriveLink(audioUrlInput);
+      setAudioBlobUrl('');
+      setAudioFetchError('');
+
+      if (convertedUrl) {
+        setIsAudioLoading(true);
+        const controller = new AbortController();
+        const signal = controller.signal;
+
+        fetch(convertedUrl, { signal })
+          .then(res => {
+            if (!res.ok) throw new Error(`無法擷取檔案 (${res.status})`);
+            return res.blob();
+          })
+          .then(blob => {
+            setAudioBlobUrl(URL.createObjectURL(blob));
+          })
+          .catch(err => {
+            if (err.name !== 'AbortError') {
+              setAudioFetchError(err.message);
+            }
+          })
+          .finally(() => {
+            setIsAudioLoading(false);
+          });
+          
+        return () => controller.abort();
+      }
+    } else {
+      setAudioBlobUrl('');
+      setAudioFetchError('');
+    }
+  }, [audioInputMethod, audioUrlInput]);
+
+  useEffect(() => {
+    if (imageInputMethod === 'link' && imageUrlInput) {
+      const convertedUrl = convertGoogleDriveLink(imageUrlInput);
+      setImageBlobUrl('');
+      setImageFetchError('');
+
+      if (convertedUrl) {
+        setIsImageLoading(true);
+         const controller = new AbortController();
+        const signal = controller.signal;
+
+        fetch(convertedUrl, { signal })
+          .then(res => {
+            if (!res.ok) throw new Error(`無法擷取檔案 (${res.status})`);
+            return res.blob();
+          })
+          .then(blob => {
+            setImageBlobUrl(URL.createObjectURL(blob));
+          })
+          .catch(err => {
+            if (err.name !== 'AbortError') {
+              setImageFetchError(err.message);
+            }
+          })
+          .finally(() => {
+            setIsImageLoading(false);
+          });
+
+        return () => controller.abort();
+      }
+    } else {
+        setImageBlobUrl('');
+        setImageFetchError('');
+    }
+  }, [imageInputMethod, imageUrlInput]);
+
   const audioUrl = useMemo(() => {
-      if (audioInputMethod === 'upload' && audioFile) {
-          return URL.createObjectURL(audioFile);
-      }
-      if (audioInputMethod === 'link' && audioUrlInput) {
-          return convertGoogleDriveLink(audioUrlInput) || '';
-      }
-      return '';
-  }, [audioFile, audioInputMethod, audioUrlInput]);
+    if (audioInputMethod === 'upload' && audioFile) {
+      return URL.createObjectURL(audioFile);
+    }
+    if (audioInputMethod === 'link') {
+      return audioBlobUrl;
+    }
+    return '';
+  }, [audioFile, audioInputMethod, audioBlobUrl]);
 
   const backgroundImageUrl = useMemo(() => {
-      if (imageInputMethod === 'upload' && backgroundImage) {
-          return URL.createObjectURL(backgroundImage);
-      }
-      if (imageInputMethod === 'link' && imageUrlInput) {
-          const convertedUrl = convertGoogleDriveLink(imageUrlInput);
-          if (convertedUrl) return convertedUrl;
-      }
-      return DEFAULT_BG_IMAGE;
-  }, [backgroundImage, imageInputMethod, imageUrlInput]);
+    if (imageInputMethod === 'upload' && backgroundImage) {
+      return URL.createObjectURL(backgroundImage);
+    }
+    if (imageInputMethod === 'link' && imageBlobUrl) {
+      return imageBlobUrl;
+    }
+    return DEFAULT_BG_IMAGE;
+  }, [backgroundImage, imageInputMethod, imageBlobUrl]);
 
 
   const handleStartTiming = (e: React.FormEvent) => {
@@ -206,9 +284,9 @@ const App: React.FC = () => {
   };
   
   const isFormValid = useMemo(() => {
-    const isAudioReady = audioInputMethod === 'upload' ? !!audioFile : !!convertGoogleDriveLink(audioUrlInput);
+    const isAudioReady = audioInputMethod === 'upload' ? !!audioFile : !!audioBlobUrl;
     return !!(lyricsText && isAudioReady && songTitle && artistName);
-  }, [lyricsText, audioInputMethod, audioFile, audioUrlInput, songTitle, artistName]);
+  }, [lyricsText, audioInputMethod, audioFile, audioBlobUrl, songTitle, artistName]);
 
   const handleUnlockAiGenerator = () => {
     if (isAiGeneratorUnlocked) return;
@@ -420,6 +498,9 @@ const App: React.FC = () => {
                               onChange={(e) => setAudioUrlInput(e.target.value)}
                           />
                            <p className="text-xs text-gray-500 mt-1">請確保連結權限為「知道連結的任何人」。</p>
+                           {isAudioLoading && <p className="text-xs text-blue-400 mt-1">正在載入音訊...</p>}
+                           {audioFetchError && <p className="text-xs text-red-400 mt-1">載入失敗: {audioFetchError}</p>}
+                           {audioBlobUrl && <p className="text-xs text-green-400 mt-1">音訊已成功載入！</p>}
                       </div>
                   )}
               </div>
@@ -455,6 +536,9 @@ const App: React.FC = () => {
                               value={imageUrlInput}
                               onChange={(e) => setImageUrlInput(e.target.value)}
                           />
+                          {isImageLoading && <p className="text-xs text-blue-400 mt-1">正在載入圖片...</p>}
+                          {imageFetchError && <p className="text-xs text-red-400 mt-1">載入失敗: {imageFetchError}</p>}
+                          {imageBlobUrl && <p className="text-xs text-green-400 mt-1">圖片已成功載入！</p>}
                       </div>
                   )}
               </div>
