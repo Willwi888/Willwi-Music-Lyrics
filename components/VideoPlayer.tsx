@@ -30,11 +30,6 @@ const fontOptions = [
   { name: '韓文黑體', value: "'Noto Sans KR', sans-serif" },
 ];
 
-const resolutions: { [key: string]: { width: number; height: number } } = {
-  '720p': { width: 1280, height: 720 },
-  '1080p': { width: 1920, height: 1080 },
-};
-
 const colorThemes: { [key: string]: { name: string; active: string; inactive1: string; inactive2: string; info: string; subInfo: string; } } = {
   light: {
     name: '明亮',
@@ -63,6 +58,10 @@ const colorThemes: { [key: string]: { name: string; active: string; inactive1: s
 };
 
 type AnimationStyle = 'scroll' | 'karaoke' | 'typewriter' | 'fade' | 'bounce';
+type ScrollLayoutStyle = 'left' | 'right';
+
+// Added a delay to compensate for potential audio/visual sync discrepancies, preventing lyrics from appearing too early.
+const VISUAL_DELAY = 0.08; // 80ms
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageUrl, songTitle, artistName, onBack }) => {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -73,16 +72,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   const [fontSize, setFontSize] = useState(48);
   const [fontFamily, setFontFamily] = useState('sans-serif');
   const [colorTheme, setColorTheme] = useState('light');
-  const [resolution, setResolution] = useState('720p');
   const [animationStyle, setAnimationStyle] = useState<AnimationStyle>('scroll');
+  const [scrollLayoutStyle, setScrollLayoutStyle] = useState<ScrollLayoutStyle>('left');
+  const [fadeOutEnabled, setFadeOutEnabled] = useState(true);
   const [showInfo, setShowInfo] = useState(true);
   
-  const [isRecording, setIsRecording] = useState(false);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const recordedChunksRef = useRef<Blob[]>([]);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-
   const isExportCancelled = useRef(false);
   const ffmpegRef = useRef<any>(null);
 
@@ -90,6 +84,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   const lyricsContainerRef = useRef<HTMLDivElement>(null);
   const lyricRefs = useRef<(HTMLParagraphElement | null)[]>([]);
   const animationFrameIdRef = useRef<number | null>(null);
+
+  const delayedCurrentTime = Math.max(0, currentTime - VISUAL_DELAY);
 
   const lyricsToRender = useMemo(() => {
     if (!timedLyrics || timedLyrics.length === 0) return [];
@@ -136,9 +132,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     const endedHandler = () => {
       setIsPlaying(false);
       setIsEnded(true);
-      if (isRecording) {
-        handleStopRecording();
-      }
     };
     
     const handleScrubbing = () => {
@@ -154,28 +147,28 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       audio.removeEventListener('ended', endedHandler);
       audio.removeEventListener('timeupdate', handleScrubbing);
     };
-  }, [isRecording]);
+  }, []);
 
   const scrollCurrentIndex = useMemo(() => {
     if (isEnded) return timedLyrics.length + 2;
     
     let activeIndex = timedLyrics.findIndex(
-      lyric => currentTime >= lyric.startTime && currentTime < lyric.endTime
+      lyric => delayedCurrentTime >= lyric.startTime && delayedCurrentTime < lyric.endTime
     );
   
     if (activeIndex === -1) {
-      if (timedLyrics.length > 0 && currentTime < timedLyrics[0].startTime) {
+      if (timedLyrics.length > 0 && delayedCurrentTime < timedLyrics[0].startTime) {
         activeIndex = -1; // Before the first lyric
       } else {
-        activeIndex = timedLyrics.findIndex(l => l.startTime > currentTime) - 1;
+        activeIndex = timedLyrics.findIndex(l => l.startTime > delayedCurrentTime) - 1;
       }
     }
     return activeIndex + 2; // Offset for dummy lyrics
-  }, [currentTime, timedLyrics, isEnded]);
+  }, [delayedCurrentTime, timedLyrics, isEnded]);
 
   const currentLyric = useMemo(() => {
-    return timedLyrics.find(lyric => currentTime >= lyric.startTime && currentTime < lyric.endTime);
-  }, [currentTime, timedLyrics]);
+    return timedLyrics.find(lyric => delayedCurrentTime >= lyric.startTime && delayedCurrentTime < lyric.endTime);
+  }, [delayedCurrentTime, timedLyrics]);
 
 
   useEffect(() => {
@@ -255,118 +248,14 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     URL.revokeObjectURL(url);
   };
 
-  const handleStartRecording = async () => {
-    if (!previewRef.current) return;
-    if (!('captureStream' in previewRef.current)) {
-      alert('您的瀏覽器不支援直接元素錄製。請嘗試使用 Chrome 或 Firefox。');
-      return;
-    }
-    isExportCancelled.current = false;
-    recordedChunksRef.current = [];
-    const videoStream = (previewRef.current as any).captureStream(30);
-    const audio = audioRef.current;
-    if (!audio) return;
-    
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-      await audioContextRef.current.close();
-    }
-    
-    const audioContext = new AudioContext();
-    audioContextRef.current = audioContext;
-    const sourceNode = audioContext.createMediaElementSource(audio);
-    const destNode = audioContext.createMediaStreamDestination();
-    sourceNode.connect(destNode);
-    sourceNode.connect(audioContext.destination);
-    const audioTrack = destNode.stream.getAudioTracks()[0];
-    
-    const combinedStream = new MediaStream([videoStream.getVideoTracks()[0], audioTrack]);
-    mediaStreamRef.current = combinedStream;
-
-    mediaRecorderRef.current = new MediaRecorder(combinedStream, {
-        mimeType: 'video/webm; codecs=vp9,opus',
-    });
-
-    mediaRecorderRef.current.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        recordedChunksRef.current.push(event.data);
-      }
-    };
-
-    mediaRecorderRef.current.onstop = async () => {
-      mediaStreamRef.current?.getTracks().forEach(track => track.stop());
-      audioContextRef.current?.close();
-
-      setExportProgress({ message: '錄製完成，正在轉換為 MP4...', progress: 0, details: '這個過程通常很快。' });
-      
-      try {
-        const recordedBlob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
-        const ffmpeg = createFFmpeg({
-            log: false,
-            corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core-st@0.11.0/dist/ffmpeg-core.js',
-        });
-        ffmpegRef.current = ffmpeg;
-        
-        await ffmpeg.load();
-        if (isExportCancelled.current) return;
-
-        setExportProgress(prev => ({ ...prev, message: '正在寫入檔案...' }));
-        ffmpeg.FS('writeFile', 'input.webm', await fetchFile(recordedBlob));
-        if (isExportCancelled.current) return;
-
-        setExportProgress(prev => ({ ...prev, message: '正在快速轉換...', progress: 50 }));
-        await ffmpeg.run('-i', 'input.webm', '-c', 'copy', 'output.mp4');
-        if (isExportCancelled.current) return;
-
-        setExportProgress(prev => ({ ...prev, message: '正在準備下載...', progress: 100 }));
-        const data = ffmpeg.FS('readFile', 'output.mp4');
-        
-        const videoBlob = new Blob([data.buffer], { type: 'video/mp4' });
-        const url = URL.createObjectURL(videoBlob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${songTitle || 'lyric_video_record'}.mp4`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-
-        ffmpeg.FS('unlink', 'input.webm');
-        ffmpeg.FS('unlink', 'output.mp4');
-
-      } catch (error) {
-        console.error('MP4 轉換失敗:', error);
-        if (!isExportCancelled.current) {
-            alert('影片轉換為 MP4 失敗。請檢查主控台以獲取詳細資訊。');
-        }
-      } finally {
-        setExportProgress(null);
-        ffmpegRef.current = null;
-      }
-    };
-
-    mediaRecorderRef.current.start();
-    setIsRecording(true);
-    
-    audio.currentTime = 0;
-    setCurrentTime(0);
-    setIsEnded(false);
-    audio.play();
-    setIsPlaying(true);
-  };
-
-  const handleStopRecording = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-      mediaRecorderRef.current.stop();
-    }
-    if(audioRef.current) {
-      audioRef.current.pause();
-    }
-    setIsRecording(false);
-    setIsPlaying(false);
-  };
-  
   const handleCancelExport = () => {
     isExportCancelled.current = true;
+     if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current.muted = false;
+      audioRef.current.playbackRate = 1;
+    }
     if (ffmpegRef.current) {
       try {
         ffmpegRef.current.exit();
@@ -376,19 +265,85 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       ffmpegRef.current = null;
     }
     setExportProgress(null);
+    setIsPlaying(false);
   };
   
-  const handleExportVideo = async () => {
+  const handleAnimatedExport = async () => {
+    if (!previewRef.current || !('captureStream' in previewRef.current)) {
+      alert('您的瀏覽器不支援此匯出功能。請嘗試使用最新版本的 Chrome 或 Firefox。');
+      return;
+    }
+    
     isExportCancelled.current = false;
-    setExportProgress({ message: '正在初始化 FFmpeg...', progress: 0, details: '這可能需要一些時間。' });
+    const recordedChunks: Blob[] = [];
+    
+    setExportProgress({ message: '正在準備錄製環境...' });
 
+    const audio = audioRef.current!;
+    const videoStream = (previewRef.current as any).captureStream(30);
+
+    const audioContext = new AudioContext();
+    const sourceNode = audioContext.createMediaElementSource(audio);
+    const destNode = audioContext.createMediaStreamDestination();
+    sourceNode.connect(destNode);
+    // Do NOT connect to audioContext.destination, to keep it silent
+    const audioTrack = destNode.stream.getAudioTracks()[0];
+    
+    const combinedStream = new MediaStream([videoStream.getVideoTracks()[0], audioTrack]);
+    const mediaRecorder = new MediaRecorder(combinedStream, {
+        mimeType: 'video/webm; codecs=vp9,opus',
+    });
+
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        recordedChunks.push(event.data);
+      }
+    };
+
+    // Wrap recording in a promise
+    const recordingPromise = new Promise<void>((resolve) => {
+        mediaRecorder.onstop = () => {
+            audio.muted = false;
+            audio.playbackRate = 1.0;
+            audio.currentTime = 0;
+            videoStream.getTracks().forEach(track => track.stop());
+            audioContext.close();
+            setIsPlaying(false);
+            resolve();
+        };
+
+        const onEnded = () => {
+            if (mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+            }
+            audio.removeEventListener('ended', onEnded);
+        };
+        audio.addEventListener('ended', onEnded);
+    });
+
+    const playbackRate = 16.0;
+    mediaRecorder.start();
+    audio.muted = true;
+    audio.playbackRate = playbackRate;
+    audio.currentTime = 0;
+    audio.play();
+    setIsPlaying(true);
+    setExportProgress({ message: `經紀人加速趕工中 (${playbackRate}x)...`, details: '請勿離開此分頁' });
+
+    await recordingPromise;
+    
+    if (isExportCancelled.current) return;
+
+    // --- Start FFmpeg processing ---
+    setExportProgress({ message: '錄製完成，影片後製中...', progress: 0, details: '速度還原並轉換為 MP4...' });
+    
     try {
         const ffmpeg = createFFmpeg({
             log: true,
             corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core-st@0.11.0/dist/ffmpeg-core.js',
         });
         ffmpegRef.current = ffmpeg;
-        
+
         ffmpeg.setLogger(({ type, message }) => {
             if (type === 'info' && message.startsWith('frame=')) {
                 try {
@@ -411,63 +366,34 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                 }
             }
         });
-
+        
         await ffmpeg.load();
         if (isExportCancelled.current) return;
 
-        setExportProgress({ message: '正在下載媒體檔案...', progress: 0 });
-
-        const srtContent = generateSrtContent();
-        ffmpeg.FS('writeFile', 'lyrics.srt', srtContent);
-        
-        const imageBlob = await fetch(imageUrl).then(r => r.blob());
-        const imageExtension = imageBlob.type.split('/')[1] || 'jpg';
-        const imageName = `background.${imageExtension}`;
-        ffmpeg.FS('writeFile', imageName, await fetchFile(imageBlob));
-
-        const audioBlob = await fetch(audioUrl).then(r => r.blob());
-        const audioExtension = audioBlob.type.split('/')[1] || 'mp3';
-        const audioName = `audio.${audioExtension}`;
-        ffmpeg.FS('writeFile', audioName, await fetchFile(audioBlob));
-
+        setExportProgress(prev => ({ ...prev, message: '正在寫入檔案...' }));
+        const recordedBlob = new Blob(recordedChunks, { type: 'video/webm' });
+        ffmpeg.FS('writeFile', 'input.webm', await fetchFile(recordedBlob));
         if (isExportCancelled.current) return;
-        setExportProgress({ message: '正在合成影片...', progress: 0, details: '這個過程將會持續幾分鐘。' });
 
-        const { width, height } = resolutions[resolution];
+        setExportProgress(prev => ({ ...prev, message: '轉換中，請稍候...' }));
         const videoFileName = `${songTitle || 'lyric_video'}.mp4`;
         
-        const filterComplex = `
-        [0:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1[bg];
-        [bg]drawtext=
-        fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf:
-        textfile=lyrics.srt:
-        fontsize=${fontSize}:
-        fontcolor=${colorThemes[colorTheme].active}:
-        box=1:
-        boxcolor=black@0.5:
-        boxborderw=10:
-        x=(w-text_w)/2:
-        y=(h-text_h)/2
-        `.replace(/\s+/g, ' '); // remove newlines and extra spaces
-
+        // This command slows down video and audio by the playbackRate factor
         await ffmpeg.run(
-            '-i', imageName,
-            '-i', audioName,
-            '-vf', filterComplex,
-            '-c:a', 'aac',
-            '-b:a', '192k',
-            '-c:v', 'libx242',
-            '-pix_fmt', 'yuv420p',
-            '-r', '30',
-            '-t', audioRef.current?.duration.toString() || '0',
-            videoFileName
+          '-i', 'input.webm', 
+          '-vf', `setpts=${playbackRate}.0*PTS`, 
+          '-af', `atempo=0.5,atempo=0.5,atempo=0.5,atempo=0.5`, // 1/16 speed
+          '-c:v', 'libx264', 
+          '-pix_fmt', 'yuv420p',
+          '-r', '30', // Set a constant frame rate
+          videoFileName
         );
         
         if (isExportCancelled.current) return;
-        
-        setExportProgress({ message: '正在完成匯出...', progress: 100 });
 
+        setExportProgress(prev => ({ ...prev, message: '準備下載...', progress: 100 }));
         const data = ffmpeg.FS('readFile', videoFileName);
+        
         const videoBlob = new Blob([data.buffer], { type: 'video/mp4' });
         const url = URL.createObjectURL(videoBlob);
         const a = document.createElement('a');
@@ -477,22 +403,21 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        
-        ffmpeg.FS('unlink', 'lyrics.srt');
-        ffmpeg.FS('unlink', imageName);
-        ffmpeg.FS('unlink', audioName);
+
+        ffmpeg.FS('unlink', 'input.webm');
         ffmpeg.FS('unlink', videoFileName);
 
     } catch (error) {
         console.error('匯出失敗:', error);
         if (!isExportCancelled.current) {
-          alert('影片匯出失敗。請檢查主控台以獲取詳細資訊。');
+            alert('影片匯出失敗。請檢查主控台以獲取詳細資訊。');
         }
     } finally {
         setExportProgress(null);
         ffmpegRef.current = null;
     }
   };
+
 
   const themeColors = colorThemes[colorTheme];
 
@@ -526,8 +451,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
             <div className={`absolute inset-0 bg-black transition-opacity duration-500 ${animationStyle === 'scroll' ? 'opacity-70' : 'opacity-50'}`}></div>
 
             {animationStyle === 'scroll' ? (
-                <div className="w-full h-full flex items-center justify-center p-8 gap-12">
-                    {/* Left: Spinning Disc & Info */}
+                <div className={`w-full h-full flex items-center justify-center p-8 gap-12 ${scrollLayoutStyle === 'right' ? 'flex-row-reverse' : ''}`}>
+                    {/* Left/Right: Spinning Disc & Info */}
                     <div className="w-2/5 flex flex-col items-center justify-center flex-shrink-0">
                         <div className="relative w-full aspect-square max-w-sm">
                             <div className={`absolute inset-0 bg-center bg-no-repeat ${isPlaying ? 'animate-spin-slow' : ''}`} style={{ backgroundImage: 'url(https://storage.googleapis.com/aistudio-hosting/workspace-template-assets/lyric-video-maker/vinyl.png)', backgroundSize: 'contain', animationPlayState: isPlaying ? 'running' : 'paused' }}></div>
@@ -539,7 +464,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                         </div>
                     </div>
 
-                    {/* Right: Lyrics Scroller */}
+                    {/* Right/Left: Lyrics Scroller */}
                     <div className="w-3/5 h-[80%] relative overflow-hidden mask-gradient">
                         <div ref={lyricsContainerRef} className="absolute top-0 left-0 w-full transition-transform duration-500 ease-out">
                         {lyricsToRender.map((lyric, index) => {
@@ -572,7 +497,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                                     textShadow: '0 2px 10px rgba(0,0,0,0.7)',
                                 }}
                                 >
-                                {lyric.text || '...'}
+                                {lyric.text}
                                 </p>
                             );
                         })}
@@ -590,44 +515,48 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                         </div>
                     </div>
                    )}
-                    <div className="w-full max-w-4xl">
-                        {currentLyric && animationStyle === 'karaoke' && (
+                    <div className="w-full max-w-4xl relative min-h-[150px]">
+                        {animationStyle === 'karaoke' && currentLyric && (
                             <KaraokeLyric
                                 key={currentLyric.startTime}
                                 text={currentLyric.text}
                                 startTime={currentLyric.startTime}
                                 endTime={currentLyric.endTime}
-                                currentTime={currentTime}
+                                currentTime={delayedCurrentTime}
                                 isPlaying={isPlaying}
                                 style={{ fontSize: `${fontSize}px`, fontFamily }}
                                 activeColor={themeColors.active}
                                 inactiveColor={themeColors.inactive2}
                             />
                         )}
-                         {currentLyric && animationStyle !== 'karaoke' && (
-                            <AnimatedLyric
-                                key={currentLyric.startTime}
-                                text={currentLyric.text}
-                                startTime={currentLyric.startTime}
-                                endTime={currentLyric.endTime}
-                                currentTime={currentTime}
-                                isPlaying={isPlaying}
-                                animationType={animationStyle}
-                                style={{ 
-                                  fontSize: `${fontSize}px`, 
-                                  fontFamily, 
-                                  color: themeColors.active,
-                                  textShadow: '0 2px 10px rgba(0,0,0,0.7)'
-                                }}
-                            />
-                        )}
+                         {animationStyle !== 'karaoke' && timedLyrics.map(lyric => (
+                            <div key={lyric.startTime} className="absolute inset-0 flex items-center justify-center">
+                               <AnimatedLyric
+                                    text={lyric.text}
+                                    startTime={lyric.startTime}
+                                    endTime={lyric.endTime}
+                                    currentTime={delayedCurrentTime}
+                                    isPlaying={isPlaying}
+                                    animationType={animationStyle}
+                                    fadeOut={animationStyle === 'fade' || (fadeOutEnabled && ['typewriter', 'bounce'].includes(animationStyle))}
+                                    style={{ 
+                                      fontSize: `${fontSize}px`, 
+                                      fontFamily, 
+                                      color: themeColors.active,
+                                      textShadow: '0 2px 10px rgba(0,0,0,0.7)'
+                                    }}
+                                />
+                            </div>
+                         ))}
                     </div>
                 </div>
             )}
-            <div className={`absolute bottom-0 left-0 w-full bg-gradient-to-t from-black/50 to-transparent p-4 flex items-center gap-4 transition-opacity duration-300 ${isRecording ? 'opacity-100' : ''}`}>
-              <div className="w-4 h-4 bg-red-500 rounded-full animate-pulse"></div>
-              <span className="text-sm font-semibold text-red-400">正在錄製...</span>
-            </div>
+            {!!exportProgress && exportProgress.message.includes('錄製中') && (
+               <div className={`absolute bottom-0 left-0 w-full bg-gradient-to-t from-black/50 to-transparent p-4 flex items-center gap-4`}>
+                <div className="w-4 h-4 bg-red-500 rounded-full animate-pulse"></div>
+                <span className="text-sm font-semibold text-red-400">正在錄製...</span>
+              </div>
+            )}
         </div>
 
         {/* Right: Controls */}
@@ -652,10 +581,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                     value={currentTime}
                     onChange={handleTimelineChange}
                     className="w-full h-1.5 bg-gray-600 rounded-full appearance-none cursor-pointer accent-[#a6a6a6]"
+                    disabled={!!exportProgress}
                 />
                 <div className="flex justify-between items-center">
                     <span className="text-sm text-gray-400 font-mono">{formatTime(currentTime)}</span>
-                    <button onClick={handlePlayPause} className="bg-white text-gray-900 rounded-full p-3 transform hover:scale-110 transition-transform disabled:opacity-50" disabled={isRecording}>
+                    <button onClick={handlePlayPause} className="bg-white text-gray-900 rounded-full p-3 transform hover:scale-110 transition-transform disabled:opacity-50" disabled={!!exportProgress}>
                         {isPlaying ? <PauseIcon className="w-6 h-6" /> : <PlayIcon className="w-6 h-6" />}
                     </button>
                     <span className="text-sm text-gray-400 font-mono">{formatTime(audioRef.current?.duration || 0)}</span>
@@ -679,14 +609,51 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                     <option value="bounce">彈跳</option>
                   </select>
               </div>
-              {animationStyle !== 'scroll' && (
-                 <div className="flex items-center justify-between bg-gray-700/50 p-2 rounded-md">
-                    <label htmlFor="show-info" className="text-sm text-gray-300">顯示歌曲資訊</label>
-                    <button onClick={() => setShowInfo(!showInfo)} className="p-1 rounded-full text-gray-300 hover:bg-gray-600">
-                      {showInfo ? <EyeIcon className="w-5 h-5" /> : <EyeSlashIcon className="w-5 h-5" />}
-                    </button>
+
+              {animationStyle === 'scroll' && (
+                 <div className="space-y-2">
+                    <label htmlFor="layout-style" className="block text-sm font-medium text-gray-300">版面樣式</label>
+                    <select
+                      id="layout-style"
+                      value={scrollLayoutStyle}
+                      onChange={(e) => setScrollLayoutStyle(e.target.value as ScrollLayoutStyle)}
+                      className="block w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-gray-500 focus:border-gray-500 sm:text-sm text-white"
+                    >
+                      <option value="left">封面在左</option>
+                      <option value="right">封面在右</option>
+                    </select>
                  </div>
               )}
+
+              {animationStyle !== 'scroll' && (
+                 <div className="space-y-3">
+                    <div className="flex items-center justify-between bg-gray-700/50 p-2 rounded-md">
+                        <label htmlFor="show-info" className="text-sm text-gray-300">顯示歌曲資訊</label>
+                        <button onClick={() => setShowInfo(!showInfo)} className="p-1 rounded-full text-gray-300 hover:bg-gray-600">
+                          {showInfo ? <EyeIcon className="w-5 h-5" /> : <EyeSlashIcon className="w-5 h-5" />}
+                        </button>
+                    </div>
+                     {['typewriter', 'bounce', 'fade'].includes(animationStyle) && (
+                        <div className="flex items-center justify-between bg-gray-700/50 p-2 rounded-md">
+                          <label htmlFor="fade-out" className="text-sm text-gray-300">淡出歌詞</label>
+                          <button
+                              onClick={() => setFadeOutEnabled(!fadeOutEnabled)}
+                              disabled={animationStyle === 'fade'}
+                              className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${
+                                  (animationStyle === 'fade' || fadeOutEnabled) ? 'bg-[#a6a6a6]' : 'bg-gray-600'
+                              } ${animationStyle === 'fade' ? 'cursor-not-allowed opacity-70' : ''}`}
+                            >
+                              <span
+                                className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform ${
+                                  (animationStyle === 'fade' || fadeOutEnabled) ? 'translate-x-6' : 'translate-x-1'
+                                }`}
+                              />
+                          </button>
+                        </div>
+                     )}
+                 </div>
+              )}
+
                <div>
                   <label htmlFor="font-size" className="block text-sm font-medium text-gray-300 mb-2">字體大小 ({fontSize}px)</label>
                   <input
@@ -743,38 +710,14 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                 </button>
               </div>
               <div className="space-y-2">
-                <button
-                  onClick={isRecording ? handleStopRecording : handleStartRecording}
-                  disabled={!!exportProgress}
-                  className={`w-full text-center py-2 px-4 border rounded-md shadow-sm text-sm font-medium transition-colors ${
-                    isRecording 
-                      ? 'bg-red-600 hover:bg-red-700 text-white border-red-500'
-                      : 'bg-gray-700 hover:bg-gray-600 text-gray-300 border-gray-600 disabled:opacity-50'
-                  }`}
-                >
-                  {isRecording ? '停止錄製' : '即時錄製 (MP4)'}
-                </button>
-                <p className="text-xs text-gray-500 px-1">即時錄製預覽畫面中的動畫，快速生成通用的 MP4 影片。</p>
-              </div>
-               <div className="space-y-2">
-                <h4 className="text-sm font-semibold text-gray-400 pt-2">高品質匯出</h4>
-                <select
-                  id="resolution"
-                  value={resolution}
-                  onChange={(e) => setResolution(e.target.value)}
-                  className="block w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-gray-500 focus:border-gray-500 sm:text-sm text-white"
-                >
-                  <option value="720p">720p (HD)</option>
-                  <option value="1080p">1080p (Full HD)</option>
-                </select>
                  <button
-                  onClick={handleExportVideo}
-                  disabled={!!exportProgress || isRecording}
+                  onClick={handleAnimatedExport}
+                  disabled={!!exportProgress}
                   className="w-full text-center py-3 px-4 border border-white/50 rounded-md shadow-sm text-sm font-bold text-gray-900 bg-[#a6a6a6] hover:bg-[#999999] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-gray-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                 >
-                  高品質匯出 (MP4)
+                  特務趕工中 (匯出影片)
                 </button>
-                 <p className="text-xs text-gray-500 px-1">離線合成高畫質 MP4，不受播放效能影響，但速度較慢。<br/><span className="text-yellow-400/80">注意：此模式不支援預覽中的動態文字效果。</span></p>
+                 <p className="text-xs text-gray-500 px-1">完整錄製預覽畫面中的所有動畫效果並匯出為 MP4。過程可能需要一些時間，請耐心等候。</p>
               </div>
             </div>
           </div>

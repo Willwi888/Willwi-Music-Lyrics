@@ -8,6 +8,7 @@ interface AnimatedLyricProps {
   isPlaying: boolean;
   animationType: 'typewriter' | 'fade' | 'bounce';
   style?: React.CSSProperties;
+  fadeOut: boolean;
 }
 
 const AnimatedLyric: React.FC<AnimatedLyricProps> = ({
@@ -18,6 +19,7 @@ const AnimatedLyric: React.FC<AnimatedLyricProps> = ({
   isPlaying,
   animationType,
   style,
+  fadeOut,
 }) => {
   const duration = (endTime - startTime);
   // Negative delay starts the animation partway through if we scrub to the middle of a line
@@ -27,39 +29,58 @@ const AnimatedLyric: React.FC<AnimatedLyricProps> = ({
     const baseStyle: React.CSSProperties = {
       ...style,
       animationPlayState: isPlaying ? 'running' : 'paused',
+      opacity: 0, // Set default to invisible. Animations will make it visible.
     };
+
+    let animationList: string[] = [];
+    let specificStyles: React.CSSProperties = {};
 
     switch (animationType) {
       case 'typewriter':
-        return {
-          ...baseStyle,
-          animation: `typewriter-anim ${duration}s steps(${text.length || 1}, end) ${delay}s forwards, blink-caret .75s step-end infinite ${delay}s`,
+        animationList.push(`typewriter-anim ${duration}s steps(${text.length || 1}, end) ${delay}s forwards`);
+        animationList.push(`blink-caret .75s step-end infinite ${delay}s`);
+        specificStyles = {
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           borderRight: `.15em solid ${style?.color || 'white'}`,
           width: 0,
-          display: 'inline-block', // to make width work
+          display: 'inline-block',
         };
+        break;
       case 'fade':
-        // Fade in for first 20% of duration, fade out for last 20%
         const fadeInDuration = duration * 0.2;
         const fadeOutDelay = delay + (duration * 0.8);
-        return {
-          ...baseStyle,
-          animation: `fade-in ${fadeInDuration}s ease-out ${delay}s forwards, fade-out ${fadeInDuration}s ease-in ${fadeOutDelay}s forwards`,
-          opacity: 0,
-        };
+        animationList.push(`fade-in ${fadeInDuration}s ease-out ${delay}s forwards`);
+        animationList.push(`fade-out ${fadeInDuration}s ease-in ${fadeOutDelay}s forwards`);
+        break;
       case 'bounce':
-         // Bounce in for first 0.5s
-        return {
-          ...baseStyle,
-          animation: `bounce-in 0.5s cubic-bezier(0.68, -0.55, 0.27, 1.55) ${delay}s forwards`,
-          opacity: 0,
-        };
-      default:
-        return baseStyle;
+        animationList.push(`bounce-in 0.5s cubic-bezier(0.68, -0.55, 0.27, 1.55) ${delay}s forwards`);
+        break;
     }
-  }, [animationType, duration, delay, isPlaying, style, text.length]);
+
+    if (fadeOut && (animationType === 'typewriter' || animationType === 'bounce')) {
+        const fadeOutDuration = Math.max(0.1, duration * 0.2); // Ensure minimum duration
+        const fadeOutDelay = delay + (duration - fadeOutDuration);
+        animationList.push(`fade-out ${fadeOutDuration}s ease-in ${fadeOutDelay}s forwards`);
+    }
+
+    // Only apply animations if the lyric is potentially in view, preventing all animations from starting at time 0
+    if (currentTime < endTime + 2 && currentTime > startTime - 2) {
+        return {
+            ...baseStyle,
+            ...specificStyles,
+            animation: animationList.join(', '),
+        };
+    }
+    
+    return baseStyle; // Return base style (opacity 0) if not in view
+
+  }, [animationType, duration, delay, isPlaying, style, text.length, fadeOut, currentTime, startTime, endTime]);
+
+  // Don't render if it's far out of view, as a small performance optimization
+  if (currentTime > endTime + 5 || currentTime < startTime - 5) {
+      return null;
+  }
 
   return (
     <>
@@ -67,8 +88,8 @@ const AnimatedLyric: React.FC<AnimatedLyricProps> = ({
         {`
           /* For Typewriter */
           @keyframes typewriter-anim {
-            from { width: 0; }
-            to { width: 100%; }
+            from { width: 0; opacity: 1; }
+            to { width: 100%; opacity: 1; }
           }
           @keyframes blink-caret {
             from, to { border-color: transparent; }
