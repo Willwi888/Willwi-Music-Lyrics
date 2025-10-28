@@ -7,6 +7,7 @@ import Loader from './Loader';
 import KaraokeLyric from './KaraokeLyric';
 import EyeIcon from './icons/EyeIcon';
 import EyeSlashIcon from './icons/EyeSlashIcon';
+import AnimatedLyric from './AnimatedLyric';
 
 // @ts-ignore
 const { createFFmpeg, fetchFile } = FFmpeg;
@@ -61,6 +62,8 @@ const colorThemes: { [key: string]: { name: string; active: string; inactive1: s
   },
 };
 
+type AnimationStyle = 'scroll' | 'karaoke' | 'typewriter' | 'fade' | 'bounce';
+
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageUrl, songTitle, artistName, onBack }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -71,7 +74,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   const [fontFamily, setFontFamily] = useState('sans-serif');
   const [colorTheme, setColorTheme] = useState('light');
   const [resolution, setResolution] = useState('720p');
-  const [animationStyle, setAnimationStyle] = useState<'scroll' | 'karaoke'>('scroll');
+  const [animationStyle, setAnimationStyle] = useState<AnimationStyle>('scroll');
   const [showInfo, setShowInfo] = useState(true);
   
   const [isRecording, setIsRecording] = useState(false);
@@ -170,7 +173,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     return activeIndex + 2; // Offset for dummy lyrics
   }, [currentTime, timedLyrics, isEnded]);
 
-  const currentKaraokeLyric = useMemo(() => {
+  const currentLyric = useMemo(() => {
     return timedLyrics.find(lyric => currentTime >= lyric.startTime && currentTime < lyric.endTime);
   }, [currentTime, timedLyrics]);
 
@@ -520,7 +523,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                 alt="背景" 
                 className="absolute inset-0 w-full h-full object-cover transition-all duration-500 blur-md scale-105"
             />
-            <div className={`absolute inset-0 bg-black transition-opacity duration-500 ${animationStyle === 'karaoke' && !showInfo ? 'opacity-50' : 'opacity-70'}`}></div>
+            <div className={`absolute inset-0 bg-black transition-opacity duration-500 ${animationStyle === 'scroll' ? 'opacity-70' : 'opacity-50'}`}></div>
 
             {animationStyle === 'scroll' ? (
                 <div className="w-full h-full flex items-center justify-center p-8 gap-12">
@@ -576,7 +579,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                         </div>
                     </div>
                 </div>
-            ) : ( // Karaoke style
+            ) : ( // Karaoke, Typewriter, Fade, Bounce styles
                 <div className="w-full h-full flex flex-col items-center justify-center p-8 relative">
                    {showInfo && (
                      <div className="absolute top-8 left-8 flex items-center gap-4 bg-black/30 backdrop-blur-sm p-3 rounded-lg">
@@ -588,17 +591,34 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                     </div>
                    )}
                     <div className="w-full max-w-4xl">
-                        {currentKaraokeLyric && (
+                        {currentLyric && animationStyle === 'karaoke' && (
                             <KaraokeLyric
-                                key={currentKaraokeLyric.startTime}
-                                text={currentKaraokeLyric.text}
-                                startTime={currentKaraokeLyric.startTime}
-                                endTime={currentKaraokeLyric.endTime}
+                                key={currentLyric.startTime}
+                                text={currentLyric.text}
+                                startTime={currentLyric.startTime}
+                                endTime={currentLyric.endTime}
                                 currentTime={currentTime}
                                 isPlaying={isPlaying}
                                 style={{ fontSize: `${fontSize}px`, fontFamily }}
                                 activeColor={themeColors.active}
                                 inactiveColor={themeColors.inactive2}
+                            />
+                        )}
+                         {currentLyric && animationStyle !== 'karaoke' && (
+                            <AnimatedLyric
+                                key={currentLyric.startTime}
+                                text={currentLyric.text}
+                                startTime={currentLyric.startTime}
+                                endTime={currentLyric.endTime}
+                                currentTime={currentTime}
+                                isPlaying={isPlaying}
+                                animationType={animationStyle}
+                                style={{ 
+                                  fontSize: `${fontSize}px`, 
+                                  fontFamily, 
+                                  color: themeColors.active,
+                                  textShadow: '0 2px 10px rgba(0,0,0,0.7)'
+                                }}
                             />
                         )}
                     </div>
@@ -649,14 +669,17 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                   <select
                     id="animation-style"
                     value={animationStyle}
-                    onChange={(e) => setAnimationStyle(e.target.value as 'scroll' | 'karaoke')}
+                    onChange={(e) => setAnimationStyle(e.target.value as AnimationStyle)}
                     className="block w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-gray-500 focus:border-gray-500 sm:text-sm text-white"
                   >
                     <option value="scroll">垂直滾動</option>
                     <option value="karaoke">卡拉OK</option>
+                    <option value="typewriter">打字機</option>
+                    <option value="fade">淡入淡出</option>
+                    <option value="bounce">彈跳</option>
                   </select>
               </div>
-              {animationStyle === 'karaoke' && (
+              {animationStyle !== 'scroll' && (
                  <div className="flex items-center justify-between bg-gray-700/50 p-2 rounded-md">
                     <label htmlFor="show-info" className="text-sm text-gray-300">顯示歌曲資訊</label>
                     <button onClick={() => setShowInfo(!showInfo)} className="p-1 rounded-full text-gray-300 hover:bg-gray-600">
@@ -751,7 +774,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                 >
                   高品質匯出 (MP4)
                 </button>
-                 <p className="text-xs text-gray-500 px-1">離線合成高畫質 MP4，不受播放效能影響，但速度較慢。</p>
+                 <p className="text-xs text-gray-500 px-1">離線合成高畫質 MP4，不受播放效能影響，但速度較慢。<br/><span className="text-yellow-400/80">注意：此模式不支援預覽中的動態文字效果。</span></p>
               </div>
             </div>
           </div>
