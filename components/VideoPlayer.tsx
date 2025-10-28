@@ -268,7 +268,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     setIsPlaying(false);
   };
   
-  const handleAnimatedExport = async () => {
+  const handleRealtimeExport = async () => {
     if (!previewRef.current || !('captureStream' in previewRef.current)) {
       alert('您的瀏覽器不支援此匯出功能。請嘗試使用最新版本的 Chrome 或 Firefox。');
       return;
@@ -276,71 +276,74 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     
     isExportCancelled.current = false;
     const recordedChunks: Blob[] = [];
-    
-    setExportProgress({ message: '正在準備錄製環境...' });
-
     const audio = audioRef.current!;
-    const videoStream = (previewRef.current as any).captureStream(30);
-
-    const audioContext = new AudioContext();
-    const sourceNode = audioContext.createMediaElementSource(audio);
-    const destNode = audioContext.createMediaStreamDestination();
-    sourceNode.connect(destNode);
-    // Do NOT connect to audioContext.destination, to keep it silent
-    const audioTrack = destNode.stream.getAudioTracks()[0];
+    let audioContext: AudioContext | null = null;
+    let videoStream: MediaStream | null = null;
+    let recordProgressInterval: number | null = null;
     
-    const combinedStream = new MediaStream([videoStream.getVideoTracks()[0], audioTrack]);
-    const mediaRecorder = new MediaRecorder(combinedStream, {
-        mimeType: 'video/webm; codecs=vp9,opus',
-    });
+    setExportProgress({ message: '正在準備即時錄製...' });
 
-    mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        recordedChunks.push(event.data);
-      }
-    };
-
-    // Wrap recording in a promise
-    const recordingPromise = new Promise<void>((resolve) => {
-        mediaRecorder.onstop = () => {
-            audio.muted = false;
-            audio.playbackRate = 1.0;
-            audio.currentTime = 0;
-            videoStream.getTracks().forEach(track => track.stop());
-            audioContext.close();
-            setIsPlaying(false);
-            resolve();
-        };
-
-        const onEnded = () => {
-            if (mediaRecorder.state === 'recording') {
-                mediaRecorder.stop();
-            }
-            audio.removeEventListener('ended', onEnded);
-        };
-        audio.addEventListener('ended', onEnded);
-    });
-
-    const playbackRate = 16.0;
-    mediaRecorder.start();
-    audio.muted = true;
-    audio.playbackRate = playbackRate;
-    audio.currentTime = 0;
-    audio.play();
-    setIsPlaying(true);
-    setExportProgress({ message: `經紀人加速趕工中 (${playbackRate}x)...`, details: '請勿離開此分頁' });
-
-    await recordingPromise;
-    
-    if (isExportCancelled.current) return;
-
-    // --- Start FFmpeg processing ---
-    setExportProgress({ message: '錄製完成，影片後製中...', progress: 0, details: '速度還原並轉換為 MP4...' });
-    
     try {
+        videoStream = (previewRef.current as any).captureStream(30);
+
+        audioContext = new AudioContext();
+        const sourceNode = audioContext.createMediaElementSource(audio);
+        const destNode = audioContext.createMediaStreamDestination();
+        sourceNode.connect(destNode);
+        const audioTrack = destNode.stream.getAudioTracks()[0];
+        
+        const combinedStream = new MediaStream([videoStream.getVideoTracks()[0], audioTrack]);
+        const mediaRecorder = new MediaRecorder(combinedStream, {
+            mimeType: 'video/webm; codecs=vp9,opus',
+        });
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            recordedChunks.push(event.data);
+          }
+        };
+
+        const recordingPromise = new Promise<void>((resolve, reject) => {
+            // Fix: Wrap `resolve` in an arrow function to match the expected event handler signature for `onstop`.
+            mediaRecorder.onstop = () => resolve();
+            mediaRecorder.onerror = (event) => reject(new Error(`MediaRecorder error: ${(event as any).error?.message || 'Unknown error'}`));
+
+            const onEnded = () => {
+                if (mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                }
+                 if(recordProgressInterval) clearInterval(recordProgressInterval);
+                audio.removeEventListener('ended', onEnded);
+            };
+            audio.addEventListener('ended', onEnded);
+        });
+        
+        mediaRecorder.start();
+        audio.muted = true;
+        audio.playbackRate = 1.0;
+        audio.currentTime = 0;
+        await audio.play();
+        setIsPlaying(true);
+        
+        recordProgressInterval = window.setInterval(() => {
+            if (audio.duration && !isExportCancelled.current) {
+                const progress = (audio.currentTime / audio.duration) * 100;
+                setExportProgress({ 
+                    message: `即時錄製中...`, 
+                    progress: progress,
+                    details: '請勿離開此分頁' 
+                });
+            }
+        }, 500);
+
+        await recordingPromise;
+        if (isExportCancelled.current) return;
+
+        setExportProgress({ message: '錄製完成，正在轉檔為 MP4...', progress: 0, details: '這可能需要一些時間...' });
+        
         const ffmpeg = createFFmpeg({
             log: true,
-            corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core-st@0.11.0/dist/ffmpeg-core.js',
+            corePath: 'https://unpkg.com/@ffmpeg/core-st@0.11.0/dist/ffmpeg-core.js',
         });
         ffmpegRef.current = ffmpeg;
 
@@ -356,14 +359,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                         if (!isExportCancelled.current) {
                             setExportProgress(prev => ({
                                 ...prev,
+                                message: '正在轉檔為 MP4...',
                                 progress: Math.min(100, progress),
                                 details: message,
                             }));
                         }
                     }
-                } catch(e) {
-                    console.error("Error parsing ffmpeg progress:", e);
-                }
+                } catch(e) { console.error("Error parsing ffmpeg progress:", e); }
             }
         });
         
@@ -378,14 +380,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         setExportProgress(prev => ({ ...prev, message: '轉換中，請稍候...' }));
         const videoFileName = `${songTitle || 'lyric_video'}.mp4`;
         
-        // This command slows down video and audio by the playbackRate factor
         await ffmpeg.run(
           '-i', 'input.webm', 
-          '-vf', `setpts=${playbackRate}.0*PTS`, 
-          '-af', `atempo=0.5,atempo=0.5,atempo=0.5,atempo=0.5`, // 1/16 speed
           '-c:v', 'libx264', 
           '-pix_fmt', 'yuv420p',
-          '-r', '30', // Set a constant frame rate
+          '-r', '30',
           videoFileName
         );
         
@@ -407,14 +406,28 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         ffmpeg.FS('unlink', 'input.webm');
         ffmpeg.FS('unlink', videoFileName);
 
-    } catch (error) {
+    } catch (error: any) {
         console.error('匯出失敗:', error);
-        if (!isExportCancelled.current) {
-            alert('影片匯出失敗。請檢查主控台以獲取詳細資訊。');
+        if (error.name === 'SecurityError' || (error.message && error.message.toLowerCase().includes('cors'))) {
+            alert('影片匯出失敗：無法處理音訊檔。如果使用連結，請確保它是公開的，或嘗試直接上傳檔案。');
+        } else if (!isExportCancelled.current) {
+            alert(`影片匯出失敗。請檢查主控台以獲取詳細資訊。\n錯誤: ${error.message}`);
         }
     } finally {
+        if(recordProgressInterval) clearInterval(recordProgressInterval);
         setExportProgress(null);
         ffmpegRef.current = null;
+         if (audioContext && audioContext.state !== 'closed') {
+            audioContext.close();
+        }
+        if (videoStream) {
+            videoStream.getTracks().forEach(track => track.stop());
+        }
+        audio.muted = false;
+        audio.playbackRate = 1.0;
+        if (!audio.paused) audio.pause();
+        audio.currentTime = 0;
+        setIsPlaying(false);
     }
   };
 
@@ -711,13 +724,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
               </div>
               <div className="space-y-2">
                  <button
-                  onClick={handleAnimatedExport}
+                  onClick={handleRealtimeExport}
                   disabled={!!exportProgress}
                   className="w-full text-center py-3 px-4 border border-white/50 rounded-md shadow-sm text-sm font-bold text-gray-900 bg-[#a6a6a6] hover:bg-[#999999] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-gray-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                 >
-                  特務趕工中 (匯出影片)
+                  即時錄製影片 (MP4)
                 </button>
-                 <p className="text-xs text-gray-500 px-1">完整錄製預覽畫面中的所有動畫效果並匯出為 MP4。過程可能需要一些時間，請耐心等候。</p>
+                 <p className="text-xs text-gray-500 px-1">以即時速度錄製預覽畫面中的所有動畫效果並匯出為 MP4。錄製時長將與歌曲長度相同。</p>
               </div>
             </div>
           </div>
