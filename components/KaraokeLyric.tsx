@@ -50,6 +50,7 @@ const KaraokeLyric: React.FC<KaraokeLyricProps> = ({
     transition: 'clip-path 0.05s linear',
     whiteSpace: 'nowrap',
     clipPath: `inset(0 ${100 - progress * 100}% 0 0)`,
+    textShadow: '0 2px 5px rgba(0,0,0,0.5)', // Added for consistency
   };
 
   return (

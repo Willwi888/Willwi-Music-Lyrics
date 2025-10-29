@@ -18,9 +18,9 @@ const DiscAnimatedLyric: React.FC<DiscAnimatedLyricProps> = ({
     activeColor, 
     nextColor 
 }) => {
-  const rotation = activeLyricIndex >= 0 ? -activeLyricIndex * 10 : 0;
-  const lyricAngle = 10; // degrees between lyrics
-  const radius = Math.max(200, fontSize * 6); // Dynamically adjust radius based on font size to prevent overlap
+  const lyricAngle = 28; // Increased from 10 to provide more spacing
+  const rotation = activeLyricIndex >= 0 ? -activeLyricIndex * lyricAngle : 0;
+  const radius = Math.max(220, fontSize * 5.5); // Adjusted radius for new angle
 
   return (
     <div className="w-full h-full flex items-center justify-center" style={{ fontFamily }}>
@@ -29,11 +29,12 @@ const DiscAnimatedLyric: React.FC<DiscAnimatedLyricProps> = ({
                 <mask id="fade-mask">
                     <rect x="-300" y="-300" width="600" height="600" fill="url(#gradient)" />
                     <linearGradient id="gradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                        {/* Softer, wider gradient for a smoother fade effect */}
                         <stop offset="0%" stopColor="white" stopOpacity="0" />
-                        <stop offset="35%" stopColor="white" stopOpacity="0" />
-                        <stop offset="48%" stopColor="white" stopOpacity="1" />
-                        <stop offset="52%" stopColor="white" stopOpacity="1" />
-                        <stop offset="65%" stopColor="white" stopOpacity="0" />
+                        <stop offset="30%" stopColor="white" stopOpacity="0" />
+                        <stop offset="45%" stopColor="white" stopOpacity="1" />
+                        <stop offset="55%" stopColor="white" stopOpacity="1" />
+                        <stop offset="70%" stopColor="white" stopOpacity="0" />
                         <stop offset="100%" stopColor="white" stopOpacity="0" />
                     </linearGradient>
                 </mask>
@@ -46,12 +47,12 @@ const DiscAnimatedLyric: React.FC<DiscAnimatedLyricProps> = ({
                     {timedLyrics.map((lyric, index) => {
                         const distance = Math.abs(index - activeLyricIndex);
                         
-                        // Limit to 5 visible lines (active + 2 before/after)
-                        if (activeLyricIndex !== -1 && distance > 2) return null;
+                        // Limit to 7 visible lines (active + 3 before/after) to enhance the wheel effect
+                        if (activeLyricIndex !== -1 && distance > 3) return null;
 
                         const isActive = index === activeLyricIndex;
-                        const opacity = isActive ? 1 : Math.max(0, 1 - distance * 0.4); // Enhanced fade-out
-                        const scale = isActive ? 1 : Math.max(0.8, 1 - distance * 0.1); // Adjusted scaling
+                        const opacity = isActive ? 1 : Math.max(0, 1 - distance * 0.25); // Softer opacity falloff
+                        const scale = isActive ? 1 : Math.max(0.8, 1 - distance * 0.1);
                         const color = isActive ? activeColor : nextColor;
 
                         const textStyle: React.CSSProperties = {
@@ -65,7 +66,7 @@ const DiscAnimatedLyric: React.FC<DiscAnimatedLyricProps> = ({
                             willChange: 'opacity, font-size, fill',
                         };
                         
-                        // Position text on circle, then un-rotate it to keep it upright
+                        // Position text on circle, then un-rotate it to keep it upright for readability
                         const transform = `rotate(${index * lyricAngle}) translate(0, -${radius}) rotate(${-index * lyricAngle})`;
 
                         return (

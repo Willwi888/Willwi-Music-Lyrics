@@ -155,7 +155,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         return;
     }
     isExportCancelled.current = false;
-    setExportProgress({ message: '特務趕工中...' });
+    setExportProgress({ message: '正在準備匯出...' });
 
     const audio = audioRef.current;
     let recorder: MediaRecorder | null = null;
@@ -205,7 +205,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
           return;
         }
 
-        setExportProgress({ message: '正在處理影片...' });
+        setExportProgress({ message: '正在完成影片檔案...' });
         const videoBlob = new Blob(chunks, { type: 'video/webm' });
         const url = URL.createObjectURL(videoBlob);
         const a = document.createElement('a');
@@ -350,7 +350,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
             <div className="pt-4 border-t border-gray-700 space-y-2">
                 <button onClick={handleExportSrt} className="w-full py-2 px-4 border border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-300 bg-gray-700 hover:bg-gray-600">匯出 SRT 字幕檔</button>
                 <button onClick={handleScreenRecordExport} className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-bold text-gray-900 bg-[#a6a6a6] hover:bg-[#999999]">匯出影片</button>
-                <p className="text-xs text-center text-gray-500">影片將匯出為 .webm 格式</p>
+                <p className="text-xs text-center text-gray-500">影片將匯出為 WEBM 格式，適合網路使用。若需轉檔，可使用線上影片轉檔工具。</p>
             </div>
           </div>
 

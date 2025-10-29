@@ -43,13 +43,15 @@ const parseSrtWithTimestamps = (srtContent: string): TimedLyric[] => {
 
   for (const block of blocks) {
     const lines = block.split('\n');
-    if (lines.length < 3) continue;
+    if (lines.length < 2) continue; // Allow blocks with just time and text
 
-    const timeLine = lines[1];
-    if (timeLine && timeLine.includes('-->')) {
+    const timeLine = lines.find(l => l.includes('-->'));
+    if (timeLine) {
       try {
+        const textLines = lines.filter(l => !/^\d+$/.test(l.trim()) && !l.includes('-->'));
+        const text = textLines.join('\n');
+
         const [startTimeStr, endTimeStr] = timeLine.split(' --> ');
-        const text = lines.slice(2).join('\n');
         
         timedLyrics.push({
           text,
@@ -64,6 +66,7 @@ const parseSrtWithTimestamps = (srtContent: string): TimedLyric[] => {
   }
   return timedLyrics;
 };
+
 
 const convertGoogleDriveLink = (url: string): string | null => {
     const regex = /drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/;
@@ -104,11 +107,21 @@ const App: React.FC = () => {
   const [imageFetchError, setImageFetchError] = useState('');
   
   const [loadingState, setLoadingState] = useState<{ message: string; details?: string } | null>(null);
+  const [formNotification, setFormNotification] = useState<{ type: 'success' | 'info' | 'error', message: string } | null>(null);
 
 
   useEffect(() => {
     setIsMounted(true);
   }, []);
+
+   useEffect(() => {
+    if (formNotification) {
+      const timer = setTimeout(() => {
+        setFormNotification(null);
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [formNotification]);
 
   useEffect(() => {
     if (audioInputMethod === 'link' && audioUrlInput) {
@@ -215,13 +228,13 @@ const App: React.FC = () => {
         setAppState('TIMING');
       }
     } else {
-      alert('請填寫所有必填欄位並提供有效的音訊來源！');
+      setFormNotification({ type: 'error', message: '請填寫所有必填欄位並提供有效的音訊來源！' });
     }
   };
   
   const handleAiTiming = async () => {
     if (!audioFile || !lyricsText || !songTitle || !artistName) {
-      alert('AI 對時前，請確保已提供音訊檔、歌詞、歌曲名稱與歌手！');
+      setFormNotification({ type: 'error', message: 'AI 對時前，請確保已提供音訊檔、歌詞、歌曲名稱與歌手！' });
       return;
     }
     setLoadingState({ message: '準備 AI 對時...' });
@@ -285,18 +298,17 @@ const App: React.FC = () => {
           setTimedLyrics(parsedTimedLyrics);
           const plainLyrics = parsedTimedLyrics.map(l => l.text).join('\n');
           setLyricsText(plainLyrics);
-          setFinalFeedback(null);
-          setFeedbackMessage('SRT 匯入成功！直接為您上菜！');
+          setFormNotification({ type: 'success', message: 'SRT 匯入成功！歌詞與時間碼已載入。' });
         } else {
           const parsedLyrics = parseSrtTextOnly(srtContent);
           setLyricsText(parsedLyrics);
           setTimedLyrics([]);
-           alert('SRT 檔案似乎沒有時間碼，已為您匯入純歌詞。');
+           setFormNotification({ type: 'info', message: 'SRT 檔案似乎沒有時間碼，已為您匯入純歌詞。' });
         }
       }
     };
     reader.onerror = () => {
-      alert('讀取 SRT 檔案時發生錯誤。');
+      setFormNotification({ type: 'error', message: '讀取 SRT 檔案時發生錯誤。' });
     };
     reader.readAsText(file);
     
@@ -449,6 +461,22 @@ const App: React.FC = () => {
 
         return (
           <div className="w-full max-w-lg p-8 space-y-6 bg-gray-800/50 backdrop-blur-sm rounded-xl shadow-2xl border border-gray-700">
+            {formNotification && (
+              <div 
+                className={`p-3 -mt-2 mb-4 rounded-md text-sm font-medium z-10 text-center shadow-lg transition-all duration-300 animate-form-notification relative
+                  ${formNotification.type === 'success' ? 'bg-green-600/90 text-white' : ''}
+                  ${formNotification.type === 'info' ? 'bg-blue-600/90 text-white' : ''}
+                  ${formNotification.type === 'error' ? 'bg-red-600/90 text-white' : ''}
+                `}
+              >
+                <span>{formNotification.message}</span>
+                <button 
+                  onClick={() => setFormNotification(null)} 
+                  className="absolute top-1/2 -translate-y-1/2 right-3 text-xl text-white/70 hover:text-white font-light"
+                  aria-label="Close notification"
+                >&times;</button>
+              </div>
+            )}
             <div className="text-center">
               <MusicIcon className="w-12 h-12 mx-auto text-gray-400" />
               <h2 className="mt-4 text-3xl font-bold tracking-tight text-white">
@@ -654,6 +682,15 @@ const App: React.FC = () => {
 
   return (
     <main className={`min-h-screen bg-gray-900 text-white p-4 transition-opacity duration-500 ${isMounted ? 'opacity-100' : 'opacity-0'}`}>
+       <style>{`
+        @keyframes form-notification-fade-in {
+          from { opacity: 0; transform: translateY(-10px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-form-notification {
+          animation: form-notification-fade-in 0.3s ease-out forwards;
+        }
+      `}</style>
        {loadingState && <Loader message={loadingState.message} details={loadingState.details} />}
        {feedbackMessage && (
          isEncouragementMessage ? (
