@@ -3,15 +3,16 @@ import React from 'react';
 interface LoaderProps {
   message: string;
   progress?: number;
+  details?: string;
   onCancel?: () => void;
 }
 
-const Loader: React.FC<LoaderProps> = ({ message, progress, onCancel }) => {
+const Loader: React.FC<LoaderProps> = ({ message, progress, details, onCancel }) => {
   const isIndeterminate = progress === undefined;
 
   return (
     <div className="fixed inset-0 bg-gray-900 bg-opacity-80 backdrop-blur-sm flex flex-col items-center justify-center z-50 text-white">
-      <div className="w-64 text-center">
+      <div className="w-72 text-center">
         <div className="mb-4 text-lg font-semibold">{message}</div>
         <div className="w-full bg-gray-700 rounded-full h-2.5 overflow-hidden">
           <div 
@@ -20,7 +21,10 @@ const Loader: React.FC<LoaderProps> = ({ message, progress, onCancel }) => {
           ></div>
         </div>
         {!isIndeterminate && (
-          <div className="text-center mt-2 text-sm text-gray-300">{progress}%</div>
+          <div className="text-center mt-2 text-sm text-gray-300">{progress?.toFixed(0)}%</div>
+        )}
+        {details && (
+          <div className="text-center mt-2 text-xs text-gray-400">{details}</div>
         )}
         {onCancel && (
           <button
