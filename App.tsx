@@ -74,8 +74,6 @@ const convertGoogleDriveLink = (url: string): string | null => {
     return null;
 };
 
-const RamenLogo = 'data:image/png;base64,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';
-
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>('CHOOSER');
   const [lyricsText, setLyricsText] = useState('');
@@ -383,11 +381,11 @@ const App: React.FC = () => {
             <div className="absolute bottom-4 right-4">
               <button
                 onClick={handleUnlockAiGenerator}
-                title="天選之桶"
-                className={`p-1 rounded-full hover:bg-gray-700/50 transition-all duration-300 group ${isAiGeneratorUnlocked ? 'opacity-50 cursor-default' : ''}`}
+                title={isAiGeneratorUnlocked ? "AI 功能已解鎖" : "解鎖 AI 功能 (密碼: 2580)"}
+                className={`p-2 rounded-full text-gray-400 hover:text-white hover:bg-gray-700/50 transition-all duration-300 group ${isAiGeneratorUnlocked ? 'opacity-50 cursor-default text-green-400 hover:text-green-400' : ''}`}
                 disabled={isAiGeneratorUnlocked}
               >
-                <img src={RamenLogo} alt="天選之桶" className="w-10 h-10 transition-transform duration-300 group-hover:scale-110" />
+                <LockIcon className="w-8 h-8 transition-transform duration-300 group-hover:scale-110" />
               </button>
             </div>
       
@@ -606,18 +604,28 @@ const App: React.FC = () => {
                   <p className="text-xs text-gray-500 mt-1">選對配料，整碗更香。（也可用專輯封面或現場照片當背景）</p>
               </div>
 
-
               <div className="space-y-4">
                  <div className="flex flex-col sm:flex-row gap-4">
-                    <button
-                      type="button"
-                      onClick={handleAiTiming}
-                      disabled={!isFormValid || timedLyrics.length > 0 || !isAiGeneratorUnlocked}
-                      title={!isAiGeneratorUnlocked ? "請點擊右下角鎖頭解鎖 AI 功能" : ""}
-                      className="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-bold text-gray-900 bg-gradient-to-r from-purple-400 to-indigo-500 hover:from-purple-500 hover:to-indigo-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
-                    >
-                      ✨ AI 自動對時
-                    </button>
+                    <div className="relative w-full">
+                      <button
+                        type="button"
+                        onClick={handleAiTiming}
+                        disabled={!isFormValid || timedLyrics.length > 0 || !isAiGeneratorUnlocked}
+                        className="w-full flex justify-center py-3 px-4 border border-transparent rounded-md shadow-sm text-sm font-bold text-gray-900 bg-gradient-to-r from-purple-400 to-indigo-500 hover:from-purple-500 hover:to-indigo-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                      >
+                        ✨ AI 自動對時
+                      </button>
+                      {!isAiGeneratorUnlocked && (
+                        <div 
+                            className="absolute inset-0 bg-gray-900/70 backdrop-blur-sm flex items-center justify-center rounded-md cursor-pointer group"
+                            onClick={handleUnlockAiGenerator}
+                            title="點擊解鎖 AI 功能 (密碼: 2580)"
+                        >
+                            <LockIcon className="w-6 h-6 text-gray-300 mr-2 group-hover:text-white transition-colors" />
+                            <span className="text-sm font-bold text-gray-300 group-hover:text-white transition-colors">點擊解鎖</span>
+                        </div>
+                      )}
+                    </div>
                     <button
                       type="submit"
                       disabled={!isFormValid}
