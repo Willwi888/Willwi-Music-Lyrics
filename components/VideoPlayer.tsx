@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { TimedLyric } from '../types';
 import PlayIcon from './icons/PlayIcon';
@@ -24,6 +25,16 @@ const fontOptions = [
   { name: '韓文黑體', value: "'Noto Sans KR', sans-serif" },
 ];
 
+const fontWeights = [
+  { name: '細體 (300)', value: '300' },
+  { name: '正常 (400)', value: '400' },
+  { name: '中等 (500)', value: '500' },
+  { name: '半粗體 (600)', value: '600' },
+  { name: '粗體 (700)', value: '700' },
+  { name: '特粗體 (800)', value: '800' },
+  { name: '極粗體 (900)', value: '900' },
+];
+
 const resolutions: { [key: string]: { width: number; height: number } } = {
   '720p': { width: 1280, height: 720 },
   '1080p': { width: 1920, height: 1080 },
@@ -33,24 +44,24 @@ const colorThemes: { [key: string]: { name: string; active: string; inactive1: s
   light: {
     name: '明亮',
     active: '#FFFFFF',
-    inactive1: '#E5E7EB',
-    inactive2: '#D1D5DB',
+    inactive1: '#E5E7EB', // Not used with current lyric display
+    inactive2: '#D1D5DB', // Not used with current lyric display
     info: '#FFFFFF',
     subInfo: '#E5E7EB',
   },
   dark: {
     name: '深邃',
     active: '#1F2937',
-    inactive1: '#4B5563',
-    inactive2: '#6B7280',
+    inactive1: '#4B5563', // Not used with current lyric display
+    inactive2: '#6B7280', // Not used with current lyric display
     info: '#1F2937',
     subInfo: '#4B5563',
   },
   colorized: {
     name: '多彩',
     active: '#FBBF24', // Amber 400
-    inactive1: '#FFFFFF',
-    inactive2: '#E5E7EB',
+    inactive1: '#FFFFFF', // Not used with current lyric display
+    inactive2: '#E5E7EB', // Not used with current lyric display
     info: '#FBBF24',
     subInfo: '#FFFFFF',
   },
@@ -64,35 +75,34 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   const audioRef = useRef<HTMLAudioElement>(null);
   const [fontSize, setFontSize] = useState(48);
   const [fontFamily, setFontFamily] = useState('sans-serif');
+  const [fontWeight, setFontWeight] = useState<string>('700'); // Default bold
+  const [strokeColor, setStrokeColor] = useState<string>('#000000'); // Default black
+  const [strokeWidth, setStrokeWidth] = useState<number>(0); // Default no stroke
   const [colorTheme, setColorTheme] = useState('light');
   const [resolution, setResolution] = useState('720p');
   const [includeAlbumArt, setIncludeAlbumArt] = useState(true);
-  const [animationStyle, setAnimationStyle] = useState('disc'); // 'disc' or 'vertical'
   const [hasPlaybackStarted, setHasPlaybackStarted] = useState(false);
   const isExportCancelled = useRef(false);
   
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaElementSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
 
+  // lyricsContainerRef and lyricRefs are not strictly needed for the new single-lyric display but kept for consistency
   const lyricsContainerRef = useRef<HTMLDivElement>(null);
-  const lyricRefs = useRef<(HTMLParagraphElement | null)[]>([]);
-  // FIX: Explicitly initialize useRef with null to avoid potential linter/compiler issues with the no-argument overload.
+  const lyricRefs = useRef<(HTMLParagraphElement | null)[]>([]); 
   const animationFrameIdRef = useRef<number | null>(null);
 
   const lyricsToRender = useMemo(() => {
     if (!timedLyrics || timedLyrics.length === 0) return [];
-    const firstStartTime = timedLyrics[0].startTime ?? 0;
-    // Add dummy lyrics at the start and end to allow scrolling to the first and last real lyrics
+    // Add dummy lyrics at the start and end to simplify currentIndex logic for bounding
     return [
       { text: '', startTime: -2, endTime: -1 }, 
-      { text: '', startTime: -1, endTime: firstStartTime },
+      { text: '', startTime: -1, endTime: timedLyrics[0].startTime ?? 0 },
       ...timedLyrics,
-      { text: '', startTime: 99999, endTime: 999999 },
-      { text: '', startTime: 999999, endTime: 9999999 },
+      { text: '', startTime: 99999, endTime: 999999 }, // Dummy after last lyric
     ];
   }, [timedLyrics]);
 
-  // This effect handles the animation loop during playback using requestAnimationFrame for smoothness
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -108,8 +118,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       if (animationFrameIdRef.current) {
         cancelAnimationFrame(animationFrameIdRef.current);
       }
-      // Also ensure time is updated when pausing
-      setCurrentTime(audio.currentTime);
+      setCurrentTime(audio.currentTime); // Update time when pausing
     }
 
     return () => {
@@ -119,7 +128,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     };
   }, [isPlaying]);
 
-  // This effect handles the 'ended' event and scrubbing the timeline while paused
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -127,10 +135,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     const endedHandler = () => {
       setIsPlaying(false);
       setIsEnded(true);
+      setCurrentTime(audio.duration || 0); // Ensure currentTime is at the end
     };
     
     const handleScrubbing = () => {
-      // Only update from timeupdate if paused, to avoid conflict with the animation loop
       if (audio.paused) {
         setCurrentTime(audio.currentTime);
       }
@@ -156,41 +164,31 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   }, []);
   
   const currentIndex = useMemo(() => {
-    if (isEnded) {
-      return timedLyrics.length + 2;
-    }
-    
-    // If playback hasn't started (paused at time 0), point to the dummy lyric before the first real one.
+    // If playback hasn't started or is at time 0 and paused, point to the dummy lyric before the first real one (index 1).
     if (currentTime === 0 && !isPlaying) {
       return 1;
     }
     
+    // Find the active lyric index
     const index = timedLyrics.findIndex(
       lyric => currentTime >= lyric.startTime && currentTime < lyric.endTime
     );
   
     if (index !== -1) {
-      return index + 2; // A lyric is active, point to it.
+      return index + 2; // Real lyrics start at index 2 in lyricsToRender
     }
   
-    // If no lyric is active, check if we're past the end of the song.
+    // If no lyric is active, check if we're past the end of the last real lyric
     if (timedLyrics.length > 0 && currentTime >= timedLyrics[timedLyrics.length - 1].endTime) {
-      return timedLyrics.length + 2; // Point to the dummy lyric *after* the last real one.
+      return timedLyrics.length + 2; // Dummy lyric after the last real one
     }
   
-    // Otherwise, we're before the first lyric.
+    // Otherwise, we're before the first lyric or in a gap, show the dummy before first real lyric.
     return 1;
-  }, [currentTime, timedLyrics, isPlaying, isEnded]);
+  }, [currentTime, timedLyrics, isPlaying]);
 
 
-  useEffect(() => {
-    if (currentIndex !== -1 && lyricsContainerRef.current && lyricRefs.current[currentIndex]) {
-        const container = lyricsContainerRef.current;
-        const activeLyricElement = lyricRefs.current[currentIndex]!;
-        const newTransform = `translateY(${container.offsetHeight / 2 - activeLyricElement.offsetTop - activeLyricElement.offsetHeight / 2}px)`;
-        container.style.transform = newTransform;
-    }
-  }, [currentIndex, fontSize, includeAlbumArt]);
+  // Removed the useEffect for lyricsContainerRef transform, as lyrics are now absolutely positioned and centered.
 
 
   const handlePlayPause = () => {
@@ -263,76 +261,40 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
 
   const handleCancelExport = () => {
     isExportCancelled.current = true;
-    // The recording loop will see this flag and stop itself.
   };
 
-  const getLyricStyle = (index: number, currentIdx?: number, baseFontSize: number = fontSize) => {
+  // Fix: Removed 'textStrokeWidth' and 'textStrokeColor' as they are not standard CSS properties directly
+  // supported by `React.CSSProperties`. `WebkitTextStrokeWidth` and `WebkitTextStrokeColor`
+  // are kept for browser compatibility. Canvas rendering handles stroke independently.
+  const getLyricStyle = useCallback((index: number, currentIdx?: number, baseFontSize: number = fontSize, baseFontWeight: string = fontWeight, baseStrokeWidth: number = strokeWidth, baseStrokeColor: string = strokeColor) => {
     const activeIndex = currentIdx !== undefined ? currentIdx : currentIndex;
-    const distance = Math.abs(index - activeIndex);
-    const rotation = animationStyle === 'disc' ? (activeIndex - index) * 10 : 0;
     const theme = colorThemes[colorTheme];
 
-    const style: { 
-        transition: string;
-        fontFamily: string;
-        fontWeight: number;
-        textShadow: string;
-        opacity: number;
-        transform: string;
-        transformOrigin: string;
-        fontSize: string;
-        color: string;
-        font: string; // For canvas
-    } = {
-        transition: 'transform 0.5s ease-out, opacity 0.5s ease-out, font-size 0.5s ease-out, color 0.5s ease-out',
-        fontFamily: fontFamily,
-        fontWeight: 500,
-        textShadow: '2px 2px 5px rgba(0,0,0,0.5)',
-        transformOrigin: includeAlbumArt ? 'left center' : 'center center',
-        opacity: 0,
-        transform: 'scale(0.8)',
-        fontSize: `${baseFontSize * 0.6}px`,
-        color: theme.inactive2,
-        font: ''
-    };
-    
-    let calculatedFontSize: number;
-    let scale: number;
+    const isCurrentLyric = index === activeIndex;
 
-    switch (distance) {
-      case 0: // Active lyric
-        calculatedFontSize = baseFontSize;
-        scale = 1;
-        style.opacity = 1;
-        style.color = theme.active;
-        style.fontWeight = 700;
-        break;
-      case 1: // Immediate neighbors
-        calculatedFontSize = baseFontSize * 0.8;
-        scale = 0.95;
-        style.opacity = 0.7;
-        style.color = theme.inactive1;
-        break;
-      case 2: // Further neighbors
-        calculatedFontSize = baseFontSize * 0.7;
-        scale = 0.9;
-        style.opacity = 0.4;
-        style.color = theme.inactive2;
-        break;
-      default: // Hidden lyrics
-        calculatedFontSize = baseFontSize * 0.6;
-        scale = 0.8;
-        style.opacity = 0;
-        style.color = theme.inactive2;
-        break;
+    const style: React.CSSProperties = {
+        fontFamily: fontFamily,
+        fontWeight: baseFontWeight,
+        textShadow: '2px 2px 5px rgba(0,0,0,0.5)',
+        opacity: isCurrentLyric ? 1 : 0, // Only active lyric is visible
+        transform: isCurrentLyric ? 'scale(1)' : 'scale(0.9)', // Slight scale for hidden ones
+        fontSize: `${baseFontSize}px`, // Always use baseFontSize for the active lyric
+        color: theme.active,
+        WebkitTextStrokeWidth: baseStrokeWidth > 0 ? `${baseStrokeWidth}px` : undefined,
+        WebkitTextStrokeColor: baseStrokeWidth > 0 ? baseStrokeColor : undefined,
+        
+        // For canvas, this needs to be a single string for ctx.font
+        font: `${baseFontWeight} ${baseFontSize}px ${fontFamily}`,
+    };
+
+    // Only apply transition for live preview for smoothness
+    if (currentIdx === undefined) {
+      style.transition = 'opacity 0.3s ease-out, transform 0.3s ease-out, font-size 0.3s ease-out, color 0.3s ease-out, -webkit-text-stroke 0.3s ease-out, text-stroke 0.3s ease-out';
     }
-    
-    style.fontSize = `${calculatedFontSize}px`;
-    style.transform = `scale(${scale}) rotate(${rotation}deg)`;
-    style.font = `${style.fontWeight} ${calculatedFontSize}px ${style.fontFamily}`;
 
     return style;
-  }
+  }, [currentIndex, fontSize, fontFamily, colorTheme, fontWeight, strokeWidth, strokeColor]);
+
 
   const handleExportVideo = async () => {
     if (!audioRef.current || !imageUrl) return;
@@ -373,7 +335,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       const wasPlaying = isPlaying;
       if (wasPlaying) handlePlayPause(); // Pause playback before starting
 
-      // --- REFACTORED AUDIO CONTEXT HANDLING ---
       // Lazily create and reuse the AudioContext and MediaElementSourceNode
       if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
         audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -386,21 +347,19 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         mediaElementSourceRef.current.connect(audioContext.destination);
       }
       const audioSource = mediaElementSourceRef.current;
-      // --- END REFACTORED AUDIO CONTEXT HANDLING ---
 
-      const audioDestination = audioContext.createMediaStreamDestination();
-      
       // Mute audio output during export by disconnecting from main destination
       try {
           audioSource.disconnect(audioContext.destination);
       } catch(e) {
           console.warn("Audio source was not connected to destination, continuing.", e);
       }
+      const audioDestination = audioContext.createMediaStreamDestination();
       audioSource.connect(audioDestination);
       const audioStream = audioDestination.stream;
 
 
-      const videoStream = canvas.captureStream(30);
+      const videoStream = canvas.captureStream(30); // 30 FPS
 
       const combinedStream = new MediaStream([
         ...videoStream.getVideoTracks(),
@@ -456,12 +415,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       recorder.start();
       const exportStartTime = Date.now();
       
-      const scaleFactor = canvas.height / 720;
+      const scaleFactor = canvas.height / 720; // Base resolution is 720p for scaling
       const exportFontSize = fontSize * scaleFactor;
-      const lyricLineHeight = exportFontSize * 3.0;
-      
-      const initialTranslateY = canvas.height / 2 - (2 * lyricLineHeight) - lyricLineHeight / 2;
-      let currentCanvasTranslateY = initialTranslateY;
+      const exportStrokeWidth = strokeWidth * scaleFactor; // Scale stroke width
 
       const theme = colorThemes[colorTheme];
 
@@ -504,7 +460,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         
         ctx.save();
         ctx.filter = 'blur(16px) brightness(0.7)';
-        ctx.drawImage(bgImage, -20, -20, canvas.width + 40, canvas.height + 40);
+        ctx.drawImage(bgImage, -20 * scaleFactor, -20 * scaleFactor, canvas.width + 40 * scaleFactor, canvas.height + 40 * scaleFactor);
         ctx.restore();
 
         ctx.fillStyle = 'rgba(0,0,0,0.4)';
@@ -512,15 +468,54 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         
         const lyricIdx = timedLyrics.findIndex(l => currentPlaybackTime >= l.startTime && currentPlaybackTime < l.endTime);
         
-        let canvasCurrentIndex;
+        let canvasCurrentIndex = -1;
         if (lyricIdx !== -1) {
-            canvasCurrentIndex = lyricIdx + 2;
-        } else if (timedLyrics.length > 0 && currentPlaybackTime >= timedLyrics[timedLyrics.length - 1].endTime) {
-            canvasCurrentIndex = timedLyrics.length + 2;
-        } else {
-            canvasCurrentIndex = 1;
+            canvasCurrentIndex = lyricIdx + 2; // Adjust for dummy lyrics at start of lyricsToRender
         }
 
+        const currentLyricObj = lyricsToRender[canvasCurrentIndex];
+
+        // Draw only the current active lyric, centered
+        if (currentLyricObj && currentLyricObj.text !== '') { // Don't draw empty dummy lyrics
+            const style = getLyricStyle(canvasCurrentIndex, canvasCurrentIndex, exportFontSize, fontWeight, exportStrokeWidth, strokeColor); 
+            
+            ctx.font = style.font;
+            ctx.textAlign = includeAlbumArt ? 'left' : 'center';
+
+            // Apply stroke first if width > 0
+            if (exportStrokeWidth > 0) {
+                ctx.strokeStyle = strokeColor;
+                ctx.lineWidth = exportStrokeWidth;
+                ctx.shadowColor = 'rgba(0,0,0,0)'; // Disable shadow for stroke
+                ctx.shadowBlur = 0;
+                ctx.shadowOffsetX = 0;
+                ctx.shadowOffsetY = 0;
+                
+                const x = includeAlbumArt ? 60 * scaleFactor : canvas.width / 2;
+                const y = canvas.height / 2;
+
+                ctx.strokeText(currentLyricObj.text, x, y);
+            }
+
+            // Apply fill (text color)
+            ctx.fillStyle = style.color;
+            ctx.globalAlpha = style.opacity as number;
+            ctx.shadowColor = style.textShadow.split(' ')[2] || 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = parseFloat(style.textShadow.split(' ')[1]) || 5;
+            ctx.shadowOffsetX = 2 * scaleFactor;
+            ctx.shadowOffsetY = 2 * scaleFactor;
+            
+            const x = includeAlbumArt ? 60 * scaleFactor : canvas.width / 2;
+            const y = canvas.height / 2;
+
+            ctx.fillText(currentLyricObj.text, x, y);
+            
+            ctx.globalAlpha = 1; // Reset alpha
+            ctx.shadowBlur = 0; // Reset shadow
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = 0;
+        }
+        
         if (includeAlbumArt) {
             const leftColWidth = canvas.width * (3 / 5);
             const rightColWidth = canvas.width * (2 / 5);
@@ -539,78 +534,12 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     
             ctx.fillStyle = theme.info;
             ctx.textAlign = 'center';
-            ctx.font = `700 ${24 * scaleFactor}px ${fontFamily}`;
+            ctx.font = `${fontWeight} ${24 * scaleFactor}px ${fontFamily}`;
             ctx.fillText(songTitle, leftColWidth + rightColWidth / 2, albumY + albumArtSize + (40 * scaleFactor), rightColWidth * 0.9);
             
             ctx.fillStyle = theme.subInfo;
-            ctx.font = `500 ${20 * scaleFactor}px ${fontFamily}`;
+            ctx.font = `${fontWeight} ${20 * scaleFactor}px ${fontFamily}`; // Ensure font weight applies to info text
             ctx.fillText(artistName, leftColWidth + rightColWidth / 2, albumY + albumArtSize + (70 * scaleFactor), rightColWidth * 0.9);
-
-            // --- Lyrics Drawing (with album art) ---
-            const targetTranslateY = canvas.height / 2 - (canvasCurrentIndex * lyricLineHeight) - lyricLineHeight / 2;
-            currentCanvasTranslateY += (targetTranslateY - currentCanvasTranslateY) * 0.1;
-
-            ctx.save();
-            ctx.rect(0, 0, leftColWidth, canvas.height);
-            ctx.clip();
-            ctx.translate(0, currentCanvasTranslateY);
-            ctx.textAlign = 'left';
-            
-            lyricsToRender.forEach((lyric, index) => {
-                const style = getLyricStyle(index, canvasCurrentIndex, exportFontSize);
-                ctx.font = style.font;
-                ctx.fillStyle = style.color;
-                ctx.globalAlpha = style.opacity;
-
-                if (ctx.globalAlpha > 0) {
-                    const x = 60 * scaleFactor;
-                    const y = index * lyricLineHeight;
-                    const transformMatch = style.transform.match(/rotate\(([^)]+)deg\)/);
-                    const rotationDegrees = transformMatch ? parseFloat(transformMatch[1]) : 0;
-                    const rotationRadians = rotationDegrees * Math.PI / 180;
-                    
-                    ctx.save();
-                    ctx.translate(x, y);
-                    ctx.rotate(rotationRadians);
-                    ctx.fillText(lyric.text, 0, 0);
-                    ctx.restore();
-                }
-            });
-
-            ctx.globalAlpha = 1;
-            ctx.restore();
-        } else {
-             // --- Lyrics Drawing (without album art, centered) ---
-            const targetTranslateY = canvas.height / 2 - (canvasCurrentIndex * lyricLineHeight) - lyricLineHeight / 2;
-            currentCanvasTranslateY += (targetTranslateY - currentCanvasTranslateY) * 0.1;
-
-            ctx.save();
-            ctx.translate(0, currentCanvasTranslateY);
-            ctx.textAlign = 'center';
-            
-            lyricsToRender.forEach((lyric, index) => {
-                const style = getLyricStyle(index, canvasCurrentIndex, exportFontSize);
-                ctx.font = style.font;
-                ctx.fillStyle = style.color;
-                ctx.globalAlpha = style.opacity;
-
-                if (ctx.globalAlpha > 0) {
-                   const x = canvas.width / 2;
-                   const y = index * lyricLineHeight;
-                   const transformMatch = style.transform.match(/rotate\(([^)]+)deg\)/);
-                   const rotationDegrees = transformMatch ? parseFloat(transformMatch[1]) : 0;
-                   const rotationRadians = rotationDegrees * Math.PI / 180;
-                   
-                   ctx.save();
-                   ctx.translate(x, y);
-                   ctx.rotate(rotationRadians);
-                   ctx.fillText(lyric.text, 0, 0);
-                   ctx.restore();
-                }
-            });
-
-            ctx.globalAlpha = 1;
-            ctx.restore();
         }
 
         // --- End Drawing ---
@@ -619,7 +548,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       animationFrameId = requestAnimationFrame(drawFrame);
 
     } catch (error) {
-      console.error("Video export failed:", error);
+      console.error("影片匯出失敗:", error);
       alert('影片匯出失敗！可能因為無法載入圖片或您的瀏覽器不支援此功能。');
       setExportProgress(null);
     }
@@ -644,18 +573,18 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
               <div className={`h-full flex flex-col justify-center overflow-hidden transition-all duration-500 ease-in-out ${includeAlbumArt ? 'w-3/5 items-start' : 'w-full items-center'}`}>
                 <div 
                     ref={lyricsContainerRef} 
-                    className={`transition-transform duration-500 ease-in-out ${includeAlbumArt ? 'w-full' : 'w-auto'} transition-opacity ${hasPlaybackStarted ? 'opacity-100' : 'opacity-0'}`}
+                    className={`relative flex flex-col justify-center items-center h-full w-full transition-opacity duration-500 ${hasPlaybackStarted ? 'opacity-100' : 'opacity-0'}`}
                 >
-                    {lyricsToRender.map((lyric, index) => (
+                    {lyricsToRender[currentIndex] && lyricsToRender[currentIndex].text !== '' && (
                         <p
-                            key={index}
-                            ref={el => { lyricRefs.current[index] = el; }}
-                            className={`px-2 py-6 tracking-wide leading-relaxed whitespace-nowrap ${includeAlbumArt ? '' : 'text-center'}`}
-                            style={getLyricStyle(index)}
+                            key={currentIndex} // Key changes to force re-render for smooth transitions on text change
+                            ref={el => { lyricRefs.current[currentIndex] = el; }}
+                            className={`absolute px-2 py-6 tracking-wide leading-relaxed whitespace-nowrap text-center `}
+                            style={getLyricStyle(currentIndex)}
                         >
-                            {lyric.text || '\u00A0' /* Non-breaking space for empty/dummy lines */}
+                            {lyricsToRender[currentIndex].text || '\u00A0'}
                         </p>
-                    ))}
+                    )}
                 </div>
               </div>
 
@@ -695,28 +624,18 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                   {isPlaying ? <PauseIcon className="w-6 h-6" /> : <PlayIcon className="w-6 h-6" />}
               </button>
               <div className="flex items-center gap-2 sm:gap-4 flex-wrap justify-end">
-                <div className="flex items-center gap-2 text-white">
-                    <label htmlFor="animation-style" className="text-xs">動畫</label>
-                    <select
-                        id="animation-style"
-                        value={animationStyle}
-                        onChange={(e) => setAnimationStyle(e.target.value)}
-                        className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-500"
-                    >
-                        <option value="disc">圓盤</option>
-                        <option value="vertical">垂直</option>
-                    </select>
-                </div>
+                {/* Animation style dropdown removed as it's not applicable to the new single-lyric display */}
                 <div className="flex items-center gap-2 text-white">
                     <label htmlFor="font-size" className="text-xs">大小</label>
-                    <input
+                    <input 
                         id="font-size"
-                        type="range"
+                        type="number"
                         min="16"
-                        max="80"
+                        max="120"
+                        step="1"
                         value={fontSize}
                         onChange={(e) => setFontSize(Number(e.target.value))}
-                        className="w-20 h-1.5 bg-white/30 rounded-full appearance-none cursor-pointer accent-[#a6a6a6]"
+                        className="w-20 px-2 py-1 bg-gray-900/50 border border-gray-600 rounded-md text-xs focus:outline-none focus:ring-1 focus:ring-gray-500 text-center"
                     />
                 </div>
                 <div className="flex items-center gap-2 text-white">
@@ -731,6 +650,45 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                             <option key={opt.value} value={opt.value} style={{ fontFamily: opt.value }}>{opt.name}</option>
                         ))}
                     </select>
+                </div>
+                {/* New: Font Weight */}
+                <div className="flex items-center gap-2 text-white">
+                    <label htmlFor="font-weight" className="text-xs">粗細</label>
+                    <select
+                        id="font-weight"
+                        value={fontWeight}
+                        onChange={(e) => setFontWeight(e.target.value)}
+                        className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-500"
+                    >
+                        {fontWeights.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.name}</option>
+                        ))}
+                    </select>
+                </div>
+                {/* New: Stroke Width */}
+                <div className="flex items-center gap-2 text-white">
+                    <label htmlFor="stroke-width" className="text-xs">描邊寬度</label>
+                    <input
+                        id="stroke-width"
+                        type="number"
+                        min="0"
+                        max="10"
+                        step="1"
+                        value={strokeWidth}
+                        onChange={(e) => setStrokeWidth(Number(e.target.value))}
+                        className="w-16 px-2 py-1 bg-gray-900/50 border border-gray-600 rounded-md text-xs focus:outline-none focus:ring-1 focus:ring-gray-500 text-center"
+                    />
+                </div>
+                {/* New: Stroke Color */}
+                <div className="flex items-center gap-2 text-white">
+                    <label htmlFor="stroke-color" className="text-xs">描邊顏色</label>
+                    <input
+                        id="stroke-color"
+                        type="color"
+                        value={strokeColor}
+                        onChange={(e) => setStrokeColor(e.target.value)}
+                        className="w-12 h-8 p-0 border-none rounded-md cursor-pointer overflow-hidden"
+                    />
                 </div>
                 <div className="flex items-center gap-2 text-white">
                     <label htmlFor="color-theme" className="text-xs">主題</label>
