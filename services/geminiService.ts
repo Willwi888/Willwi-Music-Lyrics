@@ -1,102 +1,120 @@
-import { GoogleGenAI, Type, Modality } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
+import { TimedLyric } from '../types';
 
-const API_KEY = process.env.API_KEY;
+// Helper to convert a File object to a base64 string
+const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => resolve((reader.result as string).split(',')[1]);
+        reader.onerror = error => reject(error);
+    });
+};
 
-if (!API_KEY) {
-    // In a real app, you might want to handle this more gracefully,
-    // but for this context, throwing an error is fine.
-    throw new Error("API_KEY environment variable not set. Please add it to your environment.");
-}
+// Helper function to convert SRT time format (HH:MM:SS,ms) to seconds
+const srtTimeToSeconds = (time: string): number => {
+  const parts = time.split(/[:,]/);
+  const hours = parseInt(parts[0], 10);
+  const minutes = parseInt(parts[1], 10);
+  const seconds = parseInt(parts[2], 10);
+  const milliseconds = parseInt(parts[3], 10);
+  return hours * 3600 + minutes * 60 + seconds + milliseconds / 1000;
+};
 
-const ai = new GoogleGenAI({ apiKey: API_KEY });
+// Parser for SRT content that extracts timing information
+const parseSrtWithTimestamps = (srtContent: string): TimedLyric[] => {
+  const blocks = srtContent.trim().replace(/\r/g, '').split('\n\n');
+  const timedLyrics: TimedLyric[] = [];
 
-/**
- * Generates a set of background images based on the lyrics of a song.
- * This is a multi-step process:
- * 1. Ask a text model to analyze lyrics and generate descriptive prompts.
- * 2. Use an image model to generate an image for each prompt.
- * @param lyrics The full lyrics of the song.
- * @param songTitle The title of the song.
- * @param artistName The name of the artist.
- * @param imageCount The number of images to generate.
- * @returns A promise that resolves to an array of base64 data URLs for the generated images.
- */
-export const generateImagesForLyrics = async (
-    lyrics: string,
-    songTitle: string,
-    artistName: string,
-    imageCount: number = 4
-): Promise<string[]> => {
-    try {
-        console.log("Step 1: Generating image prompts from lyrics...");
+  for (const block of blocks) {
+    const lines = block.split('\n');
+    if (lines.length < 2) continue; // Changed to 2 to handle blocks without text
 
-        const getPromptsPrompt = `Based on the lyrics for the song '${songTitle}' by ${artistName}, identify ${imageCount} distinct visual scenes or moods that capture the song's essence.
-For each scene, provide a concise, descriptive prompt suitable for an AI image generation model. The prompts should be in English for best results.
-Return the result as a JSON array of strings.
+    const timeLine = lines.find(l => l.includes('-->'));
+    if (timeLine) {
+       try {
+        const textLines = lines.filter(l => !/^\d+$/.test(l.trim()) && !l.includes('-->'));
+        const text = textLines.join('\n');
 
-Example response:
-[
-  "A lone figure walking on a rainy, neon-lit city street at night, reflection in a puddle.",
-  "Sunlight streaming through the leaves of a dense, green forest.",
-  "A vast, empty desert under a starry sky with a full moon.",
-  "Close up of two hands, weathered and old, gently held together."
-]
+        const [startTimeStr, endTimeStr] = timeLine.split(' --> ');
+        
+        timedLyrics.push({
+          text,
+          startTime: srtTimeToSeconds(startTimeStr),
+          endTime: srtTimeToSeconds(endTimeStr),
+        });
+      } catch (error) {
+        console.error("Failed to parse SRT time block:", block, error);
+        // Skip malformed blocks
+      }
+    }
+  }
+  return timedLyrics;
+};
 
-Lyrics:
+
+export const generateLyricsTiming = async (
+  audioFile: File,
+  lyricsText: string
+): Promise<TimedLyric[]> => {
+  try {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+    const audioData = await fileToBase64(audioFile);
+
+    const audioPart = {
+      inlineData: {
+        mimeType: audioFile.type,
+        data: audioData,
+      },
+    };
+
+    const systemInstruction = "You are a precise audio-to-text synchronization tool. Your sole purpose is to generate SRT timestamps for given lyrics based on an audio file.";
+    const prompt = `Please analyze the provided audio file and the following lyrics. Generate a timestamped SRT file that accurately synchronizes each line of the lyrics with the vocals in the audio.
+
+RULES:
+- The output must be ONLY the content of the SRT file, with no extra explanations, introductions, or pleasantries.
+- Each line of the lyrics should correspond to a single SRT block.
+- Ensure the start and end times are as accurate as possible, reflecting when the vocal for that line begins and ends.
+
+LYRICS:
 ---
-${lyrics}
+${lyricsText}
 ---
 `;
-        const promptResponse = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: getPromptsPrompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.ARRAY,
-                    items: {
-                        type: Type.STRING,
-                        description: "A descriptive prompt for an image generation model.",
-                    },
-                },
-            },
-        });
-        
-        const promptsText = promptResponse.text;
-        const prompts: string[] = JSON.parse(promptsText);
-        
-        if (!prompts || prompts.length === 0) {
-            throw new Error("AI did not return valid image prompts.");
-        }
 
-        console.log(`Step 2: Generating ${prompts.length} images...`);
+    const textPart = {
+        text: prompt
+    };
 
-        const imagePromises = prompts.map(async (prompt) => {
-            const imageResponse = await ai.models.generateContent({
-                model: 'gemini-2.5-flash-image',
-                contents: {
-                    parts: [{ text: prompt }],
-                },
-                config: {
-                    responseModalities: [Modality.IMAGE],
-                },
-            });
-            
-            const part = imageResponse.candidates?.[0]?.content?.parts?.[0];
-            if (part?.inlineData) {
-                const base64ImageBytes = part.inlineData.data;
-                const mimeType = part.inlineData.mimeType;
-                return `data:${mimeType};base64,${base64ImageBytes}`;
-            }
-            throw new Error(`Failed to generate image for prompt: "${prompt}"`);
-        });
+    const response = await ai.models.generateContent({
+        model: 'gemini-2.5-pro',
+        contents: { parts: [textPart, audioPart] },
+        config: { systemInstruction }
+    });
 
-        const images = await Promise.all(imagePromises);
-        console.log("Step 3: Image generation complete.");
-        return images;
-
-    } catch (error) {
-        console.error("Error in AI image generation pipeline:", error);
-        throw error;
+    const srtResponse = response.text;
+    if (!srtResponse) {
+        throw new Error('AI did not return a response.');
     }
+    
+    // Clean up potential markdown code block fences
+    const cleanedSrt = srtResponse.replace(/```srt\n/g, '').replace(/```/g, '').trim();
+
+    const timedLyrics = parseSrtWithTimestamps(cleanedSrt);
+
+    if (timedLyrics.length === 0) {
+        console.error("Parsed SRT resulted in empty array. Raw AI response:", srtResponse);
+        throw new Error('AI failed to generate valid SRT timings.');
+    }
+
+    return timedLyrics;
+
+  } catch (error) {
+    console.error('Error during AI lyrics timing generation:', error);
+    if (error instanceof Error) {
+       throw new Error(`AI 對時失敗: ${error.message}`);
+    }
+    throw new Error('發生未知錯誤，AI 對時失敗。');
+  }
 };
