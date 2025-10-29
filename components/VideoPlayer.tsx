@@ -44,24 +44,24 @@ const colorThemes: { [key: string]: { name: string; active: string; inactive1: s
   light: {
     name: '明亮',
     active: '#FFFFFF',
-    inactive1: '#E5E7EB', // Not used with current lyric display
-    inactive2: '#D1D5DB', // Not used with current lyric display
+    inactive1: '#E5E7EB',
+    inactive2: '#D1D5DB',
     info: '#FFFFFF',
     subInfo: '#E5E7EB',
   },
   dark: {
     name: '深邃',
     active: '#1F2937',
-    inactive1: '#4B5563', // Not used with current lyric display
-    inactive2: '#6B7280', // Not used with current lyric display
+    inactive1: '#4B5563',
+    inactive2: '#6B7280',
     info: '#1F2937',
     subInfo: '#4B5563',
   },
   colorized: {
     name: '多彩',
     active: '#FBBF24', // Amber 400
-    inactive1: '#FFFFFF', // Not used with current lyric display
-    inactive2: '#E5E7EB', // Not used with current lyric display
+    inactive1: '#FFFFFF',
+    inactive2: '#E5E7EB',
     info: '#FBBF24',
     subInfo: '#FFFFFF',
   },
@@ -87,21 +87,20 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaElementSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
 
-  // lyricsContainerRef and lyricRefs are not strictly needed for the new single-lyric display but kept for consistency
-  const lyricsContainerRef = useRef<HTMLDivElement>(null);
-  const lyricRefs = useRef<(HTMLParagraphElement | null)[]>([]); 
   const animationFrameIdRef = useRef<number | null>(null);
 
   const lyricsToRender = useMemo(() => {
     if (!timedLyrics || timedLyrics.length === 0) return [];
-    // Add dummy lyrics at the start and end to simplify currentIndex logic for bounding
+    // Add dummy lyrics at the start and end to ensure a 5-line display is always possible
     return [
-      { text: '', startTime: -2, endTime: -1 }, 
-      { text: '', startTime: -1, endTime: timedLyrics[0].startTime ?? 0 },
+      { text: '', startTime: -1, endTime: 0 }, // Dummy for pos -2
+      { text: '', startTime: -1, endTime: 0 }, // Dummy for pos -1
       ...timedLyrics,
-      { text: '', startTime: 99999, endTime: 999999 }, // Dummy after last lyric
+      { text: '', startTime: 99999, endTime: 999999 }, // Dummy for pos +1
+      { text: '', startTime: 99999, endTime: 999999 }, // Dummy for pos +2
     ];
   }, [timedLyrics]);
+
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -164,31 +163,106 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   }, []);
   
   const currentIndex = useMemo(() => {
-    // If playback hasn't started or is at time 0 and paused, point to the dummy lyric before the first real one (index 1).
-    if (currentTime === 0 && !isPlaying) {
-      return 1;
-    }
-    
-    // Find the active lyric index
     const index = timedLyrics.findIndex(
-      lyric => currentTime >= lyric.startTime && currentTime < lyric.endTime
+      (lyric) => currentTime >= lyric.startTime && currentTime < lyric.endTime
     );
-  
+
+    // If a lyric is active, return its index in lyricsToRender
     if (index !== -1) {
-      return index + 2; // Real lyrics start at index 2 in lyricsToRender
+      return index + 2; // +2 for the two dummy lyrics at the start
     }
-  
-    // If no lyric is active, check if we're past the end of the last real lyric
+
+    // If past the end of the song, point to the first dummy lyric *after* the real ones
     if (timedLyrics.length > 0 && currentTime >= timedLyrics[timedLyrics.length - 1].endTime) {
-      return timedLyrics.length + 2; // Dummy lyric after the last real one
+      return timedLyrics.length + 2;
     }
-  
-    // Otherwise, we're before the first lyric or in a gap, show the dummy before first real lyric.
+
+    // Otherwise, we are before the first lyric or in a gap. Point to the last dummy lyric *before* the real ones.
     return 1;
-  }, [currentTime, timedLyrics, isPlaying]);
+  }, [currentTime, timedLyrics]);
 
+  const getLyricStyle = useCallback((index: number, currentIdx: number, baseFontSize: number = fontSize, baseFontWeight: string = fontWeight, baseStrokeWidth: number = strokeWidth, baseStrokeColor: string = strokeColor) => {
+    const position = index - currentIdx;
+    const theme = colorThemes[colorTheme];
 
-  // Removed the useEffect for lyricsContainerRef transform, as lyrics are now absolutely positioned and centered.
+    let opacity = 0;
+    let scale = 0.6; // Font size scale
+    let yOffset = 0;
+    let color = theme.inactive2;
+    
+    // Use a base line height relative to the main font size for consistent spacing
+    const lineHeight = baseFontSize * 1.4;
+
+    switch (position) {
+        case 0: // Current line
+            opacity = 1;
+            scale = 1;
+            color = theme.active;
+            yOffset = 0;
+            break;
+        case -1: // Line above
+            opacity = 0.7;
+            scale = 0.8;
+            color = theme.inactive1;
+            yOffset = -lineHeight;
+            break;
+        case 1: // Line below
+            opacity = 0.7;
+            scale = 0.8;
+            color = theme.inactive1;
+            yOffset = lineHeight;
+            break;
+        case -2: // 2 lines above
+            opacity = 0.4;
+            scale = 0.6;
+            color = theme.inactive2;
+            yOffset = -lineHeight * 1.8; // Space them out a bit more
+            break;
+        case 2: // 2 lines below
+            opacity = 0.4;
+            scale = 0.6;
+            color = theme.inactive2;
+            yOffset = lineHeight * 1.8;
+            break;
+        default: // Off-screen lyrics
+            opacity = 0;
+            scale = 0.5;
+    }
+
+    const finalFontSize = baseFontSize * scale;
+    const finalStrokeWidth = baseStrokeWidth * scale;
+
+    const style: React.CSSProperties = {
+        fontFamily: fontFamily,
+        fontWeight: baseFontWeight,
+        textShadow: '2px 2px 5px rgba(0,0,0,0.5)',
+        fontSize: `${finalFontSize}px`,
+        color: color,
+        opacity: opacity,
+        transform: `translateY(${yOffset}px)`,
+        WebkitTextStrokeWidth: finalStrokeWidth > 0 ? `${finalStrokeWidth}px` : undefined,
+        WebkitTextStrokeColor: finalStrokeWidth > 0 ? baseStrokeColor : undefined,
+        transition: 'all 0.4s ease-in-out',
+        position: 'absolute',
+        width: '100%',
+        left: 0,
+        textAlign: 'center',
+    };
+
+    if (includeAlbumArt) {
+      style.textAlign = 'left';
+    }
+
+    return { 
+        style, 
+        yOffset, 
+        finalFontSize, 
+        color, 
+        opacity,
+        font: `${baseFontWeight} ${finalFontSize}px ${fontFamily}`,
+        scaledStrokeWidth: finalStrokeWidth,
+    };
+  }, [fontFamily, fontWeight, strokeWidth, strokeColor, colorTheme, includeAlbumArt, fontSize]);
 
 
   const handlePlayPause = () => {
@@ -262,39 +336,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   const handleCancelExport = () => {
     isExportCancelled.current = true;
   };
-
-  // Fix: Removed 'textStrokeWidth' and 'textStrokeColor' as they are not standard CSS properties directly
-  // supported by `React.CSSProperties`. `WebkitTextStrokeWidth` and `WebkitTextStrokeColor`
-  // are kept for browser compatibility. Canvas rendering handles stroke independently.
-  const getLyricStyle = useCallback((index: number, currentIdx?: number, baseFontSize: number = fontSize, baseFontWeight: string = fontWeight, baseStrokeWidth: number = strokeWidth, baseStrokeColor: string = strokeColor) => {
-    const activeIndex = currentIdx !== undefined ? currentIdx : currentIndex;
-    const theme = colorThemes[colorTheme];
-
-    const isCurrentLyric = index === activeIndex;
-
-    const style: React.CSSProperties = {
-        fontFamily: fontFamily,
-        fontWeight: baseFontWeight,
-        textShadow: '2px 2px 5px rgba(0,0,0,0.5)',
-        opacity: isCurrentLyric ? 1 : 0, // Only active lyric is visible
-        transform: isCurrentLyric ? 'scale(1)' : 'scale(0.9)', // Slight scale for hidden ones
-        fontSize: `${baseFontSize}px`, // Always use baseFontSize for the active lyric
-        color: theme.active,
-        WebkitTextStrokeWidth: baseStrokeWidth > 0 ? `${baseStrokeWidth}px` : undefined,
-        WebkitTextStrokeColor: baseStrokeWidth > 0 ? baseStrokeColor : undefined,
-        
-        // For canvas, this needs to be a single string for ctx.font
-        font: `${baseFontWeight} ${baseFontSize}px ${fontFamily}`,
-    };
-
-    // Only apply transition for live preview for smoothness
-    if (currentIdx === undefined) {
-      style.transition = 'opacity 0.3s ease-out, transform 0.3s ease-out, font-size 0.3s ease-out, color 0.3s ease-out, -webkit-text-stroke 0.3s ease-out, text-stroke 0.3s ease-out';
-    }
-
-    return style;
-  }, [currentIndex, fontSize, fontFamily, colorTheme, fontWeight, strokeWidth, strokeColor]);
-
 
   const handleExportVideo = async () => {
     if (!audioRef.current || !imageUrl) return;
@@ -417,7 +458,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       
       const scaleFactor = canvas.height / 720; // Base resolution is 720p for scaling
       const exportFontSize = fontSize * scaleFactor;
-      const exportStrokeWidth = strokeWidth * scaleFactor; // Scale stroke width
+      const exportStrokeWidth = strokeWidth; // Stroke width is not scaled with font size by default, but with resolution
 
       const theme = colorThemes[colorTheme];
 
@@ -467,55 +508,46 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         
         const lyricIdx = timedLyrics.findIndex(l => currentPlaybackTime >= l.startTime && currentPlaybackTime < l.endTime);
-        
-        let canvasCurrentIndex = -1;
-        if (lyricIdx !== -1) {
-            canvasCurrentIndex = lyricIdx + 2; // Adjust for dummy lyrics at start of lyricsToRender
-        }
+        const canvasCurrentIndex = (lyricIdx !== -1) ? lyricIdx + 2 
+          : (currentPlaybackTime < (timedLyrics[0]?.startTime ?? 0) ? 1 
+          : timedLyrics.length + 2);
 
-        const currentLyricObj = lyricsToRender[canvasCurrentIndex];
-
-        // Draw only the current active lyric, centered
-        if (currentLyricObj && currentLyricObj.text !== '') { // Don't draw empty dummy lyrics
-            const style = getLyricStyle(canvasCurrentIndex, canvasCurrentIndex, exportFontSize, fontWeight, exportStrokeWidth, strokeColor); 
+        [-2, -1, 0, 1, 2].forEach(offset => {
+          const lyricToDraw = lyricsToRender[canvasCurrentIndex + offset];
+          if (lyricToDraw && lyricToDraw.text) {
+            const { yOffset, color, opacity, font, scaledStrokeWidth } = getLyricStyle(
+                canvasCurrentIndex + offset,
+                canvasCurrentIndex,
+                exportFontSize,
+                fontWeight,
+                exportStrokeWidth * scaleFactor, // Scale stroke width with resolution
+                strokeColor
+            );
             
-            ctx.font = style.font;
+            ctx.save();
+            ctx.font = font;
             ctx.textAlign = includeAlbumArt ? 'left' : 'center';
+            ctx.globalAlpha = opacity;
+            ctx.textBaseline = 'middle';
 
-            // Apply stroke first if width > 0
-            if (exportStrokeWidth > 0) {
-                ctx.strokeStyle = strokeColor;
-                ctx.lineWidth = exportStrokeWidth;
-                ctx.shadowColor = 'rgba(0,0,0,0)'; // Disable shadow for stroke
-                ctx.shadowBlur = 0;
-                ctx.shadowOffsetX = 0;
-                ctx.shadowOffsetY = 0;
-                
-                const x = includeAlbumArt ? 60 * scaleFactor : canvas.width / 2;
-                const y = canvas.height / 2;
-
-                ctx.strokeText(currentLyricObj.text, x, y);
-            }
-
-            // Apply fill (text color)
-            ctx.fillStyle = style.color;
-            ctx.globalAlpha = style.opacity as number;
-            ctx.shadowColor = style.textShadow.split(' ')[2] || 'rgba(0,0,0,0.5)';
-            ctx.shadowBlur = parseFloat(style.textShadow.split(' ')[1]) || 5;
-            ctx.shadowOffsetX = 2 * scaleFactor;
-            ctx.shadowOffsetY = 2 * scaleFactor;
-            
             const x = includeAlbumArt ? 60 * scaleFactor : canvas.width / 2;
-            const y = canvas.height / 2;
+            const y = canvas.height / 2 + (yOffset * scaleFactor);
 
-            ctx.fillText(currentLyricObj.text, x, y);
+            // Stroke
+            if (scaledStrokeWidth > 0) {
+              ctx.strokeStyle = strokeColor;
+              ctx.lineWidth = scaledStrokeWidth;
+              ctx.strokeText(lyricToDraw.text, x, y);
+            }
             
-            ctx.globalAlpha = 1; // Reset alpha
-            ctx.shadowBlur = 0; // Reset shadow
-            ctx.shadowOffsetX = 0;
-            ctx.shadowOffsetY = 0;
-        }
-        
+            // Fill
+            ctx.fillStyle = color;
+            ctx.fillText(lyricToDraw.text, x, y);
+
+            ctx.restore();
+          }
+        });
+
         if (includeAlbumArt) {
             const leftColWidth = canvas.width * (3 / 5);
             const rightColWidth = canvas.width * (2 / 5);
@@ -571,21 +603,24 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
            <div className="relative z-10 w-full h-full flex p-4 sm:p-8 items-center">
               {/* Lyrics Column */}
               <div className={`h-full flex flex-col justify-center overflow-hidden transition-all duration-500 ease-in-out ${includeAlbumArt ? 'w-3/5 items-start' : 'w-full items-center'}`}>
-                <div 
-                    ref={lyricsContainerRef} 
-                    className={`relative flex flex-col justify-center items-center h-full w-full transition-opacity duration-500 ${hasPlaybackStarted ? 'opacity-100' : 'opacity-0'}`}
-                >
-                    {lyricsToRender[currentIndex] && lyricsToRender[currentIndex].text !== '' && (
-                        <p
-                            key={currentIndex} // Key changes to force re-render for smooth transitions on text change
-                            ref={el => { lyricRefs.current[currentIndex] = el; }}
-                            className={`absolute px-2 py-6 tracking-wide leading-relaxed whitespace-nowrap text-center `}
-                            style={getLyricStyle(currentIndex)}
-                        >
-                            {lyricsToRender[currentIndex].text || '\u00A0'}
-                        </p>
-                    )}
-                </div>
+                  <div 
+                      className={`relative w-full h-full flex justify-center items-center transition-opacity duration-500 ${hasPlaybackStarted ? 'opacity-100' : 'opacity-70'}`}
+                  >
+                      {[-2, -1, 0, 1, 2].map(offset => {
+                          const lyric = lyricsToRender[currentIndex + offset];
+                          if (!lyric) return null;
+                          const { style } = getLyricStyle(currentIndex + offset, currentIndex);
+                          return (
+                              <p
+                                  key={`${currentIndex + offset}-${lyric.text}`}
+                                  className={`px-2 py-1 tracking-wide leading-relaxed whitespace-nowrap`}
+                                  style={style}
+                              >
+                                  {lyric.text || '\u00A0'}
+                              </p>
+                          );
+                      })}
+                  </div>
               </div>
 
               {/* Album Art Column (Conditional) */}
@@ -624,7 +659,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                   {isPlaying ? <PauseIcon className="w-6 h-6" /> : <PlayIcon className="w-6 h-6" />}
               </button>
               <div className="flex items-center gap-2 sm:gap-4 flex-wrap justify-end">
-                {/* Animation style dropdown removed as it's not applicable to the new single-lyric display */}
                 <div className="flex items-center gap-2 text-white">
                     <label htmlFor="font-size" className="text-xs">大小</label>
                     <input 
@@ -687,7 +721,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
                         type="color"
                         value={strokeColor}
                         onChange={(e) => setStrokeColor(e.target.value)}
-                        className="w-12 h-8 p-0 border-none rounded-md cursor-pointer overflow-hidden"
+                        className="w-12 h-8 p-0 border-none rounded-md cursor-pointer overflow-hidden bg-gray-900/50"
                     />
                 </div>
                 <div className="flex items-center gap-2 text-white">
