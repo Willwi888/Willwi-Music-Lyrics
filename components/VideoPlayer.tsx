@@ -149,43 +149,73 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   };
 
   const handleScreenRecordExport = async () => {
-    // @ts-ignore
-    if (!previewRef.current || !audioRef.current || typeof previewRef.current.captureStream !== 'function' || !window.MediaRecorder) {
+    // Check for necessary APIs
+    if (!navigator.mediaDevices.getDisplayMedia || !window.MediaRecorder) {
         alert('您的瀏覽器不支援此匯出功能。請嘗試使用最新版本的 Google Chrome 或 Firefox。');
         return;
     }
+
     isExportCancelled.current = false;
     setExportProgress({ message: '正在準備匯出...' });
 
     const audio = audioRef.current;
+    if (!audio) {
+        alert('音訊元件未就緒。');
+        setExportProgress(null);
+        return;
+    }
+
     let recorder: MediaRecorder | null = null;
     let progressInterval: number | null = null;
+    let displayStream: MediaStream | null = null;
+    let audioCtx: AudioContext | null = null;
 
     const cleanup = () => {
-        if(progressInterval) clearInterval(progressInterval);
+        if (progressInterval) clearInterval(progressInterval);
         if (recorder && recorder.state === 'recording') recorder.stop();
+        
+        displayStream?.getTracks().forEach(track => track.stop());
+        if (audioCtx && audioCtx.state !== 'closed') audioCtx.close();
+
         handleCancelExport();
     }
     
     try {
-      // 1. Get streams
-      // @ts-ignore
-      const videoStream = previewRef.current.captureStream(30);
+      // 1. Get display stream (user will be prompted)
+      displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+              // @ts-ignore
+              displaySurface: 'browser', 
+              frameRate: 30
+          },
+          audio: false
+      });
+
+      if (!displayStream) {
+          throw new Error("User cancelled screen share.");
+      }
       
-      const audioCtx = new AudioContext();
+      displayStream.getVideoTracks()[0].onended = () => {
+        if (recorder && recorder.state === 'recording') {
+            recorder.stop();
+        }
+      };
+
+      // 2. Get audio stream
+      audioCtx = new AudioContext();
       const source = audioCtx.createMediaElementSource(audio);
       const dest = audioCtx.createMediaStreamDestination();
       source.connect(dest);
-      source.connect(audioCtx.destination); // Also play audio through speakers during recording
+      source.connect(audioCtx.destination);
       const audioStream = dest.stream;
 
-      // 2. Combine streams
+      // 3. Combine streams
       const combinedStream = new MediaStream([
-        ...videoStream.getVideoTracks(),
+        ...displayStream.getVideoTracks(),
         ...audioStream.getAudioTracks()
       ]);
 
-      // 3. Setup MediaRecorder
+      // 4. Setup MediaRecorder
       recorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm; codecs=vp9,opus' });
       const chunks: Blob[] = [];
       
@@ -196,10 +226,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       };
 
       recorder.onstop = () => {
-        // Stop stream tracks
-        combinedStream.getTracks().forEach(track => track.stop());
-        audioCtx.close();
-
         if (isExportCancelled.current) {
           setExportProgress(null);
           return;
@@ -226,14 +252,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
           cleanup();
       };
       
-      // Countdown before starting
-      for (let i = 3; i > 0; i--) {
-        if (isExportCancelled.current) throw new Error("Cancelled");
-        setExportProgress({ message: `錄製將於 ${i} 秒後開始...` });
-        await new Promise(res => setTimeout(res, 1000));
-      }
-      
-      // 4. Start recording and playback
+      // 5. Start recording and playback
       audio.currentTime = 0;
       setCurrentTime(0);
       await audio.play();
@@ -241,7 +260,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       recorder.start();
       setExportProgress({ message: '錄製中...', progress: 0 });
 
-      // Update progress
       progressInterval = window.setInterval(() => {
         if (isExportCancelled.current) {
             cleanup();
@@ -254,13 +272,17 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
         });
       }, 250);
 
-      // 5. Stop when audio ends
+      // 6. Stop when audio ends
       audio.addEventListener('ended', () => {
-        cleanup();
+        if (recorder && recorder.state === 'recording') {
+            recorder.stop();
+        }
       }, { once: true });
       
     } catch(error: any) {
-        if(error.message !== "Cancelled") {
+        if (error.name === 'NotAllowedError') {
+             alert('您需要授權螢幕錄製才能匯出影片。');
+        } else if (error.message !== "Cancelled" && !error.message.includes("User cancelled")) {
             alert(`匯出失敗: ${error.message}`);
         }
         cleanup();
@@ -350,7 +372,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
             <div className="pt-4 border-t border-gray-700 space-y-2">
                 <button onClick={handleExportSrt} className="w-full py-2 px-4 border border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-300 bg-gray-700 hover:bg-gray-600">匯出 SRT 字幕檔</button>
                 <button onClick={handleScreenRecordExport} className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-bold text-gray-900 bg-[#a6a6a6] hover:bg-[#999999]">匯出影片</button>
-                <p className="text-xs text-center text-gray-500">影片將匯出為 WEBM 格式，適合網路使用。若需轉檔，可使用線上影片轉檔工具。</p>
+                <p className="text-xs text-center text-gray-500">將透過螢幕錄製功能匯出 WEBM 影片。請在瀏覽器提示中選擇分享此分頁。</p>
             </div>
           </div>
 

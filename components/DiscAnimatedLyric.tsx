@@ -18,70 +18,84 @@ const DiscAnimatedLyric: React.FC<DiscAnimatedLyricProps> = ({
     activeColor, 
     nextColor 
 }) => {
-  const lyricAngle = 28; // Increased from 10 to provide more spacing
+  // Constants for the 3D wheel effect
+  const lyricAngle = 25; // Angle between each lyric element
+  const radius = fontSize * 8; // The radius of the lyric wheel
   const rotation = activeLyricIndex >= 0 ? -activeLyricIndex * lyricAngle : 0;
-  const radius = Math.max(220, fontSize * 5.5); // Adjusted radius for new angle
+
+  const containerStyle: React.CSSProperties = {
+    width: '100%',
+    height: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontFamily,
+    perspective: '1200px', // Creates the 3D space
+    overflow: 'hidden',
+  };
+
+  const wheelStyle: React.CSSProperties = {
+    position: 'relative',
+    width: '1px',
+    height: '1px',
+    transformStyle: 'preserve-3d',
+    transform: `rotateY(${rotation}deg)`,
+    transition: 'transform 0.8s cubic-bezier(0.65, 0, 0.35, 1)',
+  };
+  
+  // Create a vertical gradient mask to fade top and bottom
+  const maskStyle: React.CSSProperties = {
+    position: 'absolute',
+    inset: 0,
+    background: 'linear-gradient(to bottom, transparent 0%, black 30%, black 70%, transparent 100%)',
+    pointerEvents: 'none',
+  };
 
   return (
-    <div className="w-full h-full flex items-center justify-center" style={{ fontFamily }}>
-        <svg viewBox="-300 -300 600 600" style={{ width: '100%', height: '100%', overflow: 'visible' }}>
-            <defs>
-                <mask id="fade-mask">
-                    <rect x="-300" y="-300" width="600" height="600" fill="url(#gradient)" />
-                    <linearGradient id="gradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                        {/* Softer, wider gradient for a smoother fade effect */}
-                        <stop offset="0%" stopColor="white" stopOpacity="0" />
-                        <stop offset="30%" stopColor="white" stopOpacity="0" />
-                        <stop offset="45%" stopColor="white" stopOpacity="1" />
-                        <stop offset="55%" stopColor="white" stopOpacity="1" />
-                        <stop offset="70%" stopColor="white" stopOpacity="0" />
-                        <stop offset="100%" stopColor="white" stopOpacity="0" />
-                    </linearGradient>
-                </mask>
-            </defs>
-            <g mask="url(#fade-mask)">
-                <g style={{ 
-                    transform: `rotate(${rotation}deg)`, 
-                    transition: 'transform 0.6s cubic-bezier(0.65, 0, 0.35, 1)' 
-                }}>
-                    {timedLyrics.map((lyric, index) => {
-                        const distance = Math.abs(index - activeLyricIndex);
-                        
-                        // Limit to 7 visible lines (active + 3 before/after) to enhance the wheel effect
-                        if (activeLyricIndex !== -1 && distance > 3) return null;
+    <div style={containerStyle}>
+      <div style={wheelStyle}>
+        {timedLyrics.map((lyric, index) => {
+          const angle = index * lyricAngle;
+          const isActive = index === activeLyricIndex;
 
-                        const isActive = index === activeLyricIndex;
-                        const opacity = isActive ? 1 : Math.max(0, 1 - distance * 0.25); // Softer opacity falloff
-                        const scale = isActive ? 1 : Math.max(0.8, 1 - distance * 0.1);
-                        const color = isActive ? activeColor : nextColor;
+          const distance = Math.abs(index - activeLyricIndex);
+          // Only render a few lyrics around the active one for performance
+          if (activeLyricIndex !== -1 && distance > 5) return null;
 
-                        const textStyle: React.CSSProperties = {
-                            fontSize: `${fontSize * scale}px`,
-                            fill: color,
-                            opacity: opacity,
-                            textAnchor: 'middle',
-                            dominantBaseline: 'middle',
-                            transition: 'all 0.5s ease',
-                            textShadow: '0 2px 10px rgba(0,0,0,0.7)',
-                            willChange: 'opacity, font-size, fill',
-                        };
-                        
-                        // Position text on circle, then un-rotate it to keep it upright for readability
-                        const transform = `rotate(${index * lyricAngle}) translate(0, -${radius}) rotate(${-index * lyricAngle})`;
+          // Calculate opacity based on the lyric's position in the 3D wheel
+          let effectiveAngle = (angle + rotation) % 360;
+          if (effectiveAngle < 0) effectiveAngle += 360;
+          
+          let opacity = 0;
+          if (effectiveAngle < 60) {
+             opacity = 1 - (effectiveAngle / 60);
+          } else if (effectiveAngle > 300) {
+             opacity = 1 - ((360 - effectiveAngle) / 60);
+          }
 
-                        return (
-                            <text
-                                key={index}
-                                transform={transform}
-                                style={textStyle}
-                            >
-                                {lyric.text}
-                            </text>
-                        );
-                    })}
-                </g>
-            </g>
-        </svg>
+          const lyricStyle: React.CSSProperties = {
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: `translate(-50%, -50%) rotateY(${angle}deg) translateZ(${radius}px)`,
+            color: isActive ? activeColor : nextColor,
+            fontSize: `${fontSize}px`,
+            fontWeight: 'bold',
+            whiteSpace: 'nowrap',
+            opacity: isActive ? 1 : Math.max(0, opacity * 0.7),
+            textShadow: '0 2px 10px rgba(0,0,0,0.7)',
+            transition: 'color 0.5s ease, opacity 0.5s ease',
+            backfaceVisibility: 'hidden', // Hide the back of the element when it rotates away
+          };
+
+          return (
+            <div key={index} style={lyricStyle}>
+              {lyric.text}
+            </div>
+          );
+        })}
+      </div>
+      <div style={maskStyle}></div>
     </div>
   );
 };
