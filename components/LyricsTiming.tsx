@@ -24,6 +24,9 @@ const LyricsTiming: React.FC<LyricsTimingProps> = ({ lyricsText, audioUrl, backg
   
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editValue, setEditValue] = useState('');
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -78,6 +81,8 @@ const LyricsTiming: React.FC<LyricsTimingProps> = ({ lyricsText, audioUrl, backg
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore key events if an input or contentEditable is focused, except for Enter on contentEditable
+      if (e.target instanceof HTMLInputElement) return;
       if (e.target instanceof HTMLElement && e.target.isContentEditable) {
         if (e.key === 'Enter') {
           e.preventDefault();
@@ -97,7 +102,6 @@ const LyricsTiming: React.FC<LyricsTimingProps> = ({ lyricsText, audioUrl, backg
         setActiveLineIndex(prev => Math.max(0, prev - 1));
       } else if (e.key === 'Enter') {
         e.preventDefault();
-        // Allow setting timestamp even when paused for more flexible control.
         setTimestamp(activeLineIndex);
       }
     };
@@ -106,9 +110,10 @@ const LyricsTiming: React.FC<LyricsTimingProps> = ({ lyricsText, audioUrl, backg
   }, [activeLineIndex, editableLyrics.length, handlePlayPause, setTimestamp]);
   
   useEffect(() => {
+    if (editingIndex !== null) return;
     const activeLineElement = document.getElementById(`lyric-line-${activeLineIndex}`);
     activeLineElement?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }, [activeLineIndex]);
+  }, [activeLineIndex, editingIndex]);
 
   const handleLyricChange = (index: number, newText: string) => {
     const newLyrics = [...editableLyrics];
@@ -120,6 +125,15 @@ const LyricsTiming: React.FC<LyricsTimingProps> = ({ lyricsText, audioUrl, backg
     if (timestamps.some(t => t === null)) {
       alert('請為所有歌詞行與結尾的 "END" 標記設定時間！');
       return;
+    }
+
+    // Validation for chronological order
+    for (let i = 0; i < timestamps.length - 1; i++) {
+        if (timestamps[i]! > timestamps[i+1]!) {
+          alert(`時間戳順序錯誤：第 ${i + 2} 行的時間戳 (${timestamps[i+1]!.toFixed(2)}s) 不能早于前一行 (${timestamps[i]!.toFixed(2)}s)。`);
+          setActiveLineIndex(i + 1);
+          return;
+        }
     }
 
     const timedLyrics: TimedLyric[] = timestamps.map((startTime, index) => {
@@ -158,6 +172,28 @@ const LyricsTiming: React.FC<LyricsTimingProps> = ({ lyricsText, audioUrl, backg
     const secs = Math.floor(seconds % 60);
     return isNaN(minutes) || isNaN(secs) ? '0:00' : `${minutes}:${secs.toString().padStart(2, '0')}`;
   };
+  
+  const handleTimestampManuallyChanged = (index: number, value: string) => {
+    const newTime = parseFloat(value);
+    if (!isNaN(newTime) && newTime >= 0) {
+        const newTimestamps = [...timestamps];
+        newTimestamps[index] = newTime;
+        setTimestamps(newTimestamps);
+    }
+  };
+
+  const startEditing = (index: number) => {
+      setEditValue(timestamps[index]?.toFixed(2) ?? '');
+      setEditingIndex(index);
+  };
+
+  const finishEditing = () => {
+      if (editingIndex !== null) {
+          handleTimestampManuallyChanged(editingIndex, editValue);
+      }
+      setEditingIndex(null);
+  };
+
 
   const isCompleteEnabled = useMemo(() => timestamps.every(t => t !== null), [timestamps]);
 
@@ -167,7 +203,7 @@ const LyricsTiming: React.FC<LyricsTimingProps> = ({ lyricsText, audioUrl, backg
         {/* Left Column: Album Art & Hotkeys */}
         <div className="w-full lg:w-1/3 flex-shrink-0 lg:sticky lg:top-0">
           <h3 className="text-xl font-bold text-gray-300 mb-4 text-center">專輯封面</h3>
-          <img src={backgroundImageUrl} alt="專輯封面" className="w-full aspect-square object-cover rounded-lg shadow-2xl ring-1 ring-white/10 filter blur-sm" />
+          <img src={backgroundImageUrl} alt="專輯封面" className="w-full aspect-square object-cover rounded-lg shadow-2xl ring-1 ring-white/10" />
           <div className="mt-4 p-4 bg-gray-800/50 rounded-lg border border-gray-700">
              <h4 className="font-semibold text-gray-300 mb-2">快捷鍵</h4>
              <div className="text-sm text-left grid grid-cols-2 gap-x-4 gap-y-2 text-gray-300">
@@ -231,8 +267,23 @@ const LyricsTiming: React.FC<LyricsTimingProps> = ({ lyricsText, audioUrl, backg
                   >
                     <td className="p-3 text-center w-28 font-mono">
                       <div className="flex items-center justify-center gap-2">
-                        <span>{timestamps[index] !== null ? `${timestamps[index]!.toFixed(2)}s` : '---'}</span>
-                        {timestamps[index] !== null && (
+                         {editingIndex === index ? (
+                            <input
+                                type="number"
+                                step="0.01"
+                                value={editValue}
+                                onChange={(e) => setEditValue(e.target.value)}
+                                onBlur={finishEditing}
+                                onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                                autoFocus
+                                className="w-20 bg-gray-700 text-white text-center rounded p-1 outline-none ring-2 ring-gray-500"
+                            />
+                        ) : (
+                            <span onClick={() => startEditing(index)} className="p-1 rounded cursor-text hover:bg-gray-700">
+                               {timestamps[index] !== null ? `${timestamps[index]!.toFixed(2)}s` : '---'}
+                            </span>
+                        )}
+                        {timestamps[index] !== null && editingIndex !== index && (
                           <button
                             onClick={(e) => { e.stopPropagation(); handleResetTimestamp(index); }}
                             title="重設時間"
@@ -279,7 +330,8 @@ const LyricsTiming: React.FC<LyricsTimingProps> = ({ lyricsText, audioUrl, backg
         />
         <div className="flex items-center gap-3">
           <span className="text-sm text-gray-400 font-mono w-12 text-center">{formatTime(currentTime)}</span>
-          <input
+          <div className="relative w-full flex items-center">
+            <input
               type="range"
               min={0}
               max={duration || 0}
@@ -287,7 +339,24 @@ const LyricsTiming: React.FC<LyricsTimingProps> = ({ lyricsText, audioUrl, backg
               value={currentTime}
               onChange={handleTimelineChange}
               className="w-full h-1.5 bg-gray-600 rounded-full appearance-none cursor-pointer accent-[#a6a6a6]"
-          />
+            />
+            <div className="absolute w-full h-full top-0 left-0 pointer-events-none flex items-center">
+              {timestamps.map((ts, index) => {
+                if (ts !== null && duration > 0) {
+                  const leftPercent = (ts / duration) * 100;
+                  return (
+                    <div
+                      key={`marker-${index}`}
+                      title={`第 ${index + 1} 句: ${ts.toFixed(2)}s`}
+                      className="absolute w-1 h-3 bg-white transform -translate-x-1/2"
+                      style={{ left: `${leftPercent}%` }}
+                    ></div>
+                  );
+                }
+                return null;
+              })}
+            </div>
+          </div>
           <span className="text-sm text-gray-400 font-mono w-12 text-center">{formatTime(duration)}</span>
         </div>
         <div className="flex items-center justify-between">

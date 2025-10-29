@@ -87,7 +87,9 @@ const VideoGenerator: React.FC<{ onBack: () => void }> = ({ onBack }) => {
             }
             
             if (operation.error) {
-                throw new Error(operation.error.message || 'Unknown error during generation.');
+                // Fix: The `operation.error.message` property is of type `unknown` and cannot be directly passed to the `Error` constructor.
+                // Cast `operation.error` to `any` to resolve the type mismatch and ensure a descriptive error message is thrown.
+                throw new Error((operation.error as any).message || 'Unknown error during generation.');
             }
 
             setLoadingState({ message: '正在擷取生成的影片...' });
