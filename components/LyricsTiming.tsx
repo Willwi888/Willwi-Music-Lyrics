@@ -279,8 +279,7 @@ const LyricsTiming: React.FC<LyricsTimingProps> = ({ lyricsText, audioUrl, backg
         />
         <div className="flex items-center gap-3">
           <span className="text-sm text-gray-400 font-mono w-12 text-center">{formatTime(currentTime)}</span>
-          <div className="relative w-full flex items-center">
-            <input
+          <input
               type="range"
               min={0}
               max={duration || 0}
@@ -288,24 +287,7 @@ const LyricsTiming: React.FC<LyricsTimingProps> = ({ lyricsText, audioUrl, backg
               value={currentTime}
               onChange={handleTimelineChange}
               className="w-full h-1.5 bg-gray-600 rounded-full appearance-none cursor-pointer accent-[#a6a6a6]"
-            />
-            <div className="absolute w-full h-full top-0 left-0 pointer-events-none flex items-center">
-              {timestamps.map((ts, index) => {
-                if (ts !== null && duration > 0) {
-                  const leftPercent = (ts / duration) * 100;
-                  return (
-                    <div
-                      key={`marker-${index}`}
-                      title={`第 ${index + 1} 句: ${ts.toFixed(2)}s`}
-                      className="absolute w-1 h-3 bg-white transform -translate-x-1/2"
-                      style={{ left: `${leftPercent}%` }}
-                    ></div>
-                  );
-                }
-                return null;
-              })}
-            </div>
-          </div>
+          />
           <span className="text-sm text-gray-400 font-mono w-12 text-center">{formatTime(duration)}</span>
         </div>
         <div className="flex items-center justify-between">
