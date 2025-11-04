@@ -4,59 +4,60 @@ import PlayIcon from './icons/PlayIcon';
 import PauseIcon from './icons/PauseIcon';
 import PrevIcon from './icons/PrevIcon';
 import Loader from './Loader';
-import DiscAnimatedLyric from './DiscAnimatedLyric';
-import VerticalAnimatedLyric from './VerticalAnimatedLyric';
-import KaraokeLyric from './KaraokeLyric';
+
+// Allows access to the FFmpeg library loaded from the script tag in index.html
+declare global {
+  interface Window {
+    FFmpeg: any;
+  }
+}
 
 interface VideoPlayerProps {
   timedLyrics: TimedLyric[];
   audioUrl: string;
   imageUrl: string;
-  songTitle: string;
-  artistName: string;
   onBack: () => void;
-  isAiGeneratorUnlocked: boolean;
-  finalFeedback: string | null;
 }
 
+const fetchFile = async (url: string | Blob): Promise<Uint8Array> => {
+  const response = await fetch(url instanceof Blob ? URL.createObjectURL(url) : url);
+  const data = await response.arrayBuffer();
+  return new Uint8Array(data);
+};
+
 const fontOptions = [
-  { name: '現代無襯線', value: 'sans-serif' },
-  { name: '經典襯線', value: 'serif' },
-  { name: '手寫體', value: 'cursive' },
-  { name: '打字機', value: 'monospace' },
-  { name: '日文黑體', value: "'Noto Sans JP', sans-serif" },
-  { name: '韓文黑體', value: "'Noto Sans KR', sans-serif" },
+  { name: '思源黑體', value: "'Noto Sans TC', sans-serif" },
+  { name: '思源宋體', value: "'Noto Serif TC', serif" },
+  { name: '馬善政書法', value: "'Ma Shan Zheng', cursive" },
+  { name: '站酷快樂體', value: "'ZCOOL KuaiLe', cursive" },
+  { name: '龍藏體', value: "'Long Cang', cursive" },
 ];
 
-const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageUrl, songTitle, artistName, onBack, isAiGeneratorUnlocked, finalFeedback }) => {
+const animationOptions = [
+  { name: '淡入向上', value: 'fade-in-up' },
+  { name: '淡入', value: 'fade-in' },
+  { name: '縮放', value: 'scale-in' },
+  { name: '由右滑入', value: 'slide-in-right' },
+];
+
+const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageUrl, onBack }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [exportProgress, setExportProgress] = useState<{ message: string; progress?: number; details?: string } | null>(null);
+  const [exportProgress, setExportProgress] = useState<{ message: string; progress: number } | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [fontSize, setFontSize] = useState(48);
-  const [fontFamily, setFontFamily] = useState('sans-serif');
-  const [activeLyricColor, setActiveLyricColor] = useState('#FFFFFF');
-  const [nextLyricColor, setNextLyricColor] = useState('#D1D5DB');
-  const [infoColor, setInfoColor] = useState('#FFFFFF');
-  const [subInfoColor, setSubInfoColor] = useState('#E5E7EB');
-  const [layoutStyle, setLayoutStyle] = useState<'left' | 'right'>('left');
-  const [animationStyle, setAnimationStyle] = useState<'disc' | 'vertical' | 'karaoke'>('disc');
-
+  const [fontFamily, setFontFamily] = useState("'Noto Sans TC', sans-serif");
+  const [animationStyle, setAnimationStyle] = useState('fade-in-up');
+  const ffmpegRef = useRef<any>(null);
   const isExportCancelled = useRef(false);
-  const previewRef = useRef<HTMLDivElement>(null);
+
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    
-    const timeUpdateHandler = () => {
-      setCurrentTime(audio.currentTime);
-    };
-    
-    const endedHandler = () => {
-      setIsPlaying(false);
-    };
+
+    const timeUpdateHandler = () => setCurrentTime(audio.currentTime);
+    const endedHandler = () => setIsPlaying(false);
 
     audio.addEventListener('timeupdate', timeUpdateHandler);
     audio.addEventListener('ended', endedHandler);
@@ -66,30 +67,20 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       audio.removeEventListener('ended', endedHandler);
     };
   }, []);
-
-  const activeLyricIndex = useMemo(() => {
-    return timedLyrics.findIndex(
-      lyric => currentTime >= lyric.startTime && currentTime < lyric.endTime
-    );
-  }, [currentTime, timedLyrics]);
   
-  const activeLyric = activeLyricIndex > -1 ? timedLyrics[activeLyricIndex] : null;
-  const nextLyric = activeLyricIndex > -1 && (activeLyricIndex + 1) < timedLyrics.length ? timedLyrics[activeLyricIndex + 1] : null;
+  const currentLyric = useMemo(() => {
+    return timedLyrics.find(lyric => currentTime >= lyric.startTime && currentTime < lyric.endTime) || null;
+  }, [currentTime, timedLyrics]);
 
   const handlePlayPause = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    if (isPlaying) {
-        audio.pause();
-    } else {
-        if (audio.ended) {
-            audio.currentTime = 0;
-            setCurrentTime(0);
-        }
-        audio.play();
+    if (audioRef.current) {
+      if (isPlaying) {
+        audioRef.current.pause();
+      } else {
+        audioRef.current.play();
+      }
+      setIsPlaying(!isPlaying);
     }
-    setIsPlaying(!isPlaying);
   };
   
   const handleTimelineChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -114,23 +105,19 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     return `${h}:${m}:${s},${ms}`;
   };
 
-  const generateSrtContent = () => {
+  const handleExportSrt = () => {
     let srtContent = '';
     timedLyrics.forEach((lyric, index) => {
-        const startTime = formatSrtTime(lyric.startTime);
-        const endTime = formatSrtTime(lyric.endTime);
-        srtContent += `${index + 1}\n${startTime} --> ${endTime}\n${lyric.text}\n\n`;
+      const startTime = formatSrtTime(lyric.startTime);
+      const endTime = formatSrtTime(lyric.endTime);
+      srtContent += `${index + 1}\n${startTime} --> ${endTime}\n${lyric.text}\n\n`;
     });
-    return srtContent;
-  }
 
-  const handleExportSrt = () => {
-    const srtContent = generateSrtContent();
-    const blob = new Blob([srtContent], { type: 'text/plain;charset=utf-8' });
+    const blob = new Blob([srtContent], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${songTitle || 'lyrics'}.srt`;
+    a.download = 'lyrics.srt';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -139,328 +126,327 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
 
   const handleCancelExport = () => {
     isExportCancelled.current = true;
-     if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
+    if (ffmpegRef.current) {
+      try {
+        ffmpegRef.current.exit();
+      } catch (e) {
+        console.warn('Could not terminate FFmpeg process.', e);
+      }
     }
+    ffmpegRef.current = null;
     setExportProgress(null);
-    setIsPlaying(false);
-    setCurrentTime(0);
   };
 
-  const handleScreenRecordExport = async () => {
-    // Check for necessary APIs
-    if (!navigator.mediaDevices.getDisplayMedia || !window.MediaRecorder) {
-        alert('您的瀏覽器不支援此匯出功能。請嘗試使用最新版本的 Google Chrome 或 Firefox。');
-        return;
-    }
+  const handleExportMp4 = async () => {
+    if (!audioRef.current || !imageUrl) return;
 
     isExportCancelled.current = false;
-    setExportProgress({ message: '正在準備匯出...' });
+    setExportProgress({ message: '正在初始化...', progress: 0 });
 
-    const audio = audioRef.current;
-    if (!audio) {
-        alert('音訊元件未就緒。');
+    try {
+      const VIDEO_WIDTH = 1280;
+      const VIDEO_HEIGHT = 720;
+      const FRAME_RATE = 30;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = VIDEO_WIDTH;
+      canvas.height = VIDEO_HEIGHT;
+      const ctx = canvas.getContext('2d')!;
+
+      const mimeTypes = [
+        'video/webm; codecs=vp9',
+        'video/webm; codecs=vp8',
+        'video/webm',
+      ];
+      const supportedMimeType = mimeTypes.find(type => MediaRecorder.isTypeSupported(type));
+
+      if (!supportedMimeType) {
+        alert('您的瀏覽器不支援影片錄製功能，無法匯出 MP4。請嘗試更新您的瀏覽器（建議使用 Chrome 或 Firefox）。');
         setExportProgress(null);
         return;
-    }
+      }
 
-    let recorder: MediaRecorder | null = null;
-    let progressInterval: number | null = null;
-    let displayStream: MediaStream | null = null;
-    let audioCtx: AudioContext | null = null;
+      const stream = canvas.captureStream(FRAME_RATE);
+      const recorder = new MediaRecorder(stream, { mimeType: supportedMimeType });
+      const videoChunks: Blob[] = [];
+      recorder.ondataavailable = (e) => videoChunks.push(e.data);
 
-    const cleanup = () => {
-        if (progressInterval) clearInterval(progressInterval);
-        if (recorder && recorder.state === 'recording') recorder.stop();
-        
-        displayStream?.getTracks().forEach(track => track.stop());
-        if (audioCtx && audioCtx.state !== 'closed') audioCtx.close();
-
-        handleCancelExport();
-    }
-    
-    try {
-      // 1. Get display stream (user will be prompted)
-      displayStream = await navigator.mediaDevices.getDisplayMedia({
-          video: {
-              // @ts-ignore
-              displaySurface: 'browser', 
-              frameRate: 30
-          },
-          audio: false
+      const recordingPromise = new Promise<Blob | null>((resolve) => {
+        recorder.onstop = () => {
+          resolve(videoChunks.length > 0 ? new Blob(videoChunks, { type: 'video/webm' }) : null);
+        };
       });
 
-      if (!displayStream) {
-          throw new Error("User cancelled screen share.");
-      }
-      
-      displayStream.getVideoTracks()[0].onended = () => {
-        if (recorder && recorder.state === 'recording') {
-            recorder.stop();
-        }
-      };
+      const bgImage = new Image();
+      bgImage.crossOrigin = 'anonymous';
+      const bgImagePromise = new Promise((resolve, reject) => {
+        bgImage.onload = resolve;
+        bgImage.onerror = reject;
+      });
+      bgImage.src = imageUrl;
+      await bgImagePromise;
 
-      // 2. Get audio stream
-      audioCtx = new AudioContext();
-      const source = audioCtx.createMediaElementSource(audio);
-      const dest = audioCtx.createMediaStreamDestination();
-      source.connect(dest);
-      source.connect(audioCtx.destination);
-      const audioStream = dest.stream;
+      const duration = audioRef.current.duration;
+      audioRef.current.currentTime = 0;
+      recorder.start();
 
-      // 3. Combine streams
-      const combinedStream = new MediaStream([
-        ...displayStream.getVideoTracks(),
-        ...audioStream.getAudioTracks()
-      ]);
-
-      // 4. Setup MediaRecorder
-      recorder = new MediaRecorder(combinedStream, { mimeType: 'video/webm; codecs=vp9,opus' });
-      const chunks: Blob[] = [];
-      
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          chunks.push(event.data);
-        }
-      };
-
-      recorder.onstop = () => {
+      for (let i = 0; i < duration * FRAME_RATE; i++) {
         if (isExportCancelled.current) {
-          setExportProgress(null);
+          if (recorder.state === 'recording') recorder.stop();
+          console.log('Export cancelled during frame rendering.');
           return;
         }
 
-        setExportProgress({ message: '正在完成影片檔案...' });
-        const videoBlob = new Blob(chunks, { type: 'video/webm' });
-        const url = URL.createObjectURL(videoBlob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${songTitle || 'lyric-video'}.webm`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        
-        cleanup();
-      };
-      
-      recorder.onerror = (event) => {
-          console.error("MediaRecorder error:", event);
-          // @ts-ignore
-          alert(`錄製時發生錯誤: ${event.error.message}`);
-          cleanup();
-      };
-      
-      // 5. Start recording and playback
-      audio.currentTime = 0;
-      setCurrentTime(0);
-      await audio.play();
-      setIsPlaying(true);
-      recorder.start();
-      setExportProgress({ message: '錄製中...', progress: 0 });
+        const time = i / FRAME_RATE;
 
-      progressInterval = window.setInterval(() => {
-        if (isExportCancelled.current) {
-            cleanup();
-            return;
-        }
-        setExportProgress({
-          message: '錄製中...',
-          progress: (audio.currentTime / audio.duration) * 100,
-          details: `${formatTime(audio.currentTime)} / ${formatTime(duration)}`
-        });
-      }, 250);
+        ctx.drawImage(bgImage, 0, 0, VIDEO_WIDTH, VIDEO_HEIGHT);
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+        ctx.fillRect(0, 0, VIDEO_WIDTH, VIDEO_HEIGHT);
 
-      // 6. Stop when audio ends
-      audio.addEventListener('ended', () => {
-        if (recorder && recorder.state === 'recording') {
-            recorder.stop();
+        const artSize = VIDEO_HEIGHT * 0.6;
+        const artX = VIDEO_WIDTH * 0.15;
+        const artY = (VIDEO_HEIGHT - artSize) / 2;
+        ctx.drawImage(bgImage, artX, artY, artSize, artSize);
+
+        const lyric = timedLyrics.find((l) => time >= l.startTime && time < l.endTime);
+        if (lyric) {
+          const timeInLyric = time - lyric.startTime;
+          const animationDuration = 0.5;
+          const progress = Math.min(1, timeInLyric / animationDuration);
+
+          let opacity = 0;
+          let translateX = 0;
+          let translateY = 0;
+          let scale = 1;
+
+          switch (animationStyle) {
+            case 'fade-in':
+              opacity = progress;
+              break;
+            case 'scale-in':
+              opacity = progress;
+              scale = 0.9 + 0.1 * progress;
+              break;
+            case 'slide-in-right':
+              opacity = progress;
+              translateX = 30 * (1 - progress);
+              break;
+            case 'fade-in-up':
+            default:
+              opacity = progress;
+              translateY = 20 * (1 - progress);
+              break;
+          }
+          
+          ctx.save();
+          const lyricX = artX + artSize + (VIDEO_WIDTH - (artX + artSize)) / 2;
+          const lyricY = VIDEO_HEIGHT / 2;
+          ctx.translate(lyricX + translateX, lyricY + translateY);
+          ctx.scale(scale, scale);
+          
+          ctx.font = `bold ${fontSize * (VIDEO_WIDTH / 1280)}px ${fontFamily}`;
+          ctx.fillStyle = `rgba(255, 255, 255, ${opacity})`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.shadowColor = 'rgba(0,0,0,0.7)';
+          ctx.shadowBlur = 10;
+          ctx.fillText(lyric.text, 0, 0);
+          ctx.restore();
         }
-      }, { once: true });
-      
-    } catch(error: any) {
-        if (error.name === 'NotAllowedError') {
-             alert('您需要授權螢幕錄製才能匯出影片。');
-        } else if (error.message !== "Cancelled" && !error.message.includes("User cancelled")) {
-            alert(`匯出失敗: ${error.message}`);
+
+        await new Promise(requestAnimationFrame);
+        if (i % 10 === 0) {
+          setExportProgress({ message: '正在渲染動畫...', progress: Math.round((time / duration) * 50) });
         }
-        cleanup();
+      }
+
+      if (recorder.state === 'recording') recorder.stop();
+      const silentVideoBlob = await recordingPromise;
+
+      if (isExportCancelled.current || !silentVideoBlob) {
+        console.log('Export cancelled or failed before encoding.');
+        return;
+      }
+
+      setExportProgress({ message: '正在初始化編碼器...', progress: 50 });
+      const { createFFmpeg } = window.FFmpeg;
+      const ffmpeg = createFFmpeg({
+        log: true,
+        corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
+      });
+      ffmpegRef.current = ffmpeg;
+
+      await ffmpeg.load();
+      if (isExportCancelled.current) {
+        return;
+      }
+
+      setExportProgress({ message: '正在準備檔案...', progress: 55 });
+      ffmpeg.FS('writeFile', 'video.webm', await fetchFile(silentVideoBlob));
+      ffmpeg.FS('writeFile', 'audio.mp3', await fetchFile(audioUrl));
+
+      ffmpeg.setProgress(({ ratio }) => {
+        if (isExportCancelled.current) return;
+        setExportProgress({ message: '正在編碼影片...', progress: 55 + Math.round(ratio * 45) });
+      });
+
+      await ffmpeg.run('-i', 'video.webm', '-i', 'audio.mp3', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', 'output.mp4');
+
+      if (isExportCancelled.current) {
+        return;
+      }
+
+      const data = ffmpeg.FS('readFile', 'output.mp4');
+      const videoUrl = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
+
+      const a = document.createElement('a');
+      a.href = videoUrl;
+      a.download = 'lyric-video.mp4';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(videoUrl);
+    } catch (error) {
+      console.error('MP4 導出失敗:', error);
+      alert('影片匯出失敗！\n\n編碼過程中發生錯誤。這可能是由於影片時間過長、瀏覽器記憶體不足或音訊檔案格式問題所導致。\n\n建議操作：\n1. 嘗試匯出較短的片段。\n2. 關閉其他瀏覽器分頁後再試一次。\n3. 確認您的音訊檔案 (.mp3, .wav) 沒有損壞。');
+    } finally {
+      ffmpegRef.current = null;
+      setExportProgress(null);
     }
   };
+  
+  const durationValue = audioRef.current?.duration || 0;
 
   return (
     <>
-      {exportProgress && (
-        <Loader
-          message={exportProgress.message}
-          progress={exportProgress.progress}
-          details={exportProgress.details}
-          onCancel={handleCancelExport}
-        />
-      )}
-      <div className="w-full h-full flex flex-col bg-gray-900 text-white font-sans absolute inset-0">
-        {/* Top Bar */}
-        <div className="flex-shrink-0 p-4 flex justify-between items-center bg-gray-800/50 border-b border-gray-700 z-10">
-          <button onClick={onBack} className="flex items-center gap-2 text-sm text-gray-300 hover:text-white transition-colors">
-            <PrevIcon className="w-6 h-6" />
-            <span>返回設定</span>
-          </button>
-          <div className="text-center">
-            <h1 className="font-bold text-lg truncate max-w-xs md:max-w-md">{songTitle}</h1>
-            <p className="text-sm text-gray-400 truncate max-w-xs md:max-w-md">{artistName}</p>
-          </div>
-          <div className="w-24"></div> {/* Spacer */}
-        </div>
+      {exportProgress && <Loader message={exportProgress.message} progress={exportProgress.progress} onCancel={handleCancelExport} />}
+      <div className="w-full max-w-6xl mx-auto">
+        <audio ref={audioRef} src={audioUrl} onLoadedMetadata={() => setCurrentTime(0)} />
         
-        {/* Main Content: Preview & Controls */}
-        <div className="flex-grow flex flex-col lg:flex-row overflow-hidden">
-          {/* Controls Panel */}
-          <div className="w-full lg:w-80 flex-shrink-0 p-4 space-y-4 overflow-y-auto custom-scrollbar bg-gray-800/30">
-            <h3 className="text-lg font-bold border-b border-gray-700 pb-2">樣式設定</h3>
-            
-            <div>
-              <label htmlFor="font-size" className="block text-sm font-medium text-gray-300 mb-1">字體大小: <span className="font-mono">{fontSize}px</span></label>
-              <input type="range" id="font-size" min="16" max="128" value={fontSize} onChange={e => setFontSize(Number(e.target.value))} className="w-full h-2 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-[#a6a6a6]"/>
+        <div className="flex flex-col md:flex-row gap-8 items-center py-8 px-4">
+            {/* Left Column: Album Art */}
+            <div className="w-full md:w-2/5 flex-shrink-0">
+                <img src={imageUrl} alt="專輯封面" className="w-full aspect-square object-cover rounded-xl shadow-2xl ring-1 ring-white/10"/>
             </div>
 
-            <div>
-              <label htmlFor="font-family" className="block text-sm font-medium text-gray-300">字體</label>
-              <select id="font-family" value={fontFamily} onChange={e => setFontFamily(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 text-base bg-gray-700 border-gray-600 focus:outline-none focus:ring-gray-500 focus:border-gray-500 sm:text-sm rounded-md text-white">
-                {fontOptions.map(font => <option key={font.value} value={font.value}>{font.name}</option>)}
-              </select>
+            {/* Right Column: Lyrics */}
+            <div className="w-full md:w-3/5 h-48 flex items-center justify-center">
+                <div className="w-full text-center text-white">
+                    <div className="h-24 flex items-center justify-center">
+                      {currentLyric ? (
+                          <p 
+                            key={currentLyric.text} 
+                            className={`font-bold drop-shadow-lg animate-${animationStyle}`}
+                            style={{
+                              fontSize: `${fontSize}px`,
+                              fontFamily: fontFamily,
+                            }}
+                          >
+                              {currentLyric.text}
+                          </p>
+                      ) : (
+                          <p className="text-gray-600" style={{ fontSize: `${fontSize}px`, fontFamily: fontFamily, }}>...</p>
+                      )}
+                    </div>
+                </div>
             </div>
+        </div>
 
-            <div className="grid grid-cols-2 gap-4 pt-2">
-              <div>
-                <label htmlFor="active-color" className="block text-sm font-medium text-gray-300 text-center">目前歌詞</label>
-                <input type="color" id="active-color" value={activeLyricColor} onChange={e => setActiveLyricColor(e.target.value)} className="mt-1 h-10 w-full block bg-gray-700 border border-gray-600 cursor-pointer rounded-md"/>
-              </div>
-              <div>
-                <label htmlFor="next-color" className="block text-sm font-medium text-gray-300 text-center">下句歌詞</label>
-                <input type="color" id="next-color" value={nextLyricColor} onChange={e => setNextLyricColor(e.target.value)} className="mt-1 h-10 w-full block bg-gray-700 border border-gray-600 cursor-pointer rounded-md"/>
-              </div>
-               <div>
-                <label htmlFor="info-color" className="block text-sm font-medium text-gray-300 text-center">歌曲名稱</label>
-                <input type="color" id="info-color" value={infoColor} onChange={e => setInfoColor(e.target.value)} className="mt-1 h-10 w-full block bg-gray-700 border border-gray-600 cursor-pointer rounded-md"/>
-              </div>
-              <div>
-                <label htmlFor="subinfo-color" className="block text-sm font-medium text-gray-300 text-center">歌手名稱</label>
-                <input type="color" id="subinfo-color" value={subInfoColor} onChange={e => setSubInfoColor(e.target.value)} className="mt-1 h-10 w-full block bg-gray-700 border border-gray-600 cursor-pointer rounded-md"/>
-              </div>
-            </div>
-            
-            <div>
-              <span className="block text-sm font-medium text-gray-300">版面配置</span>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <button onClick={() => setLayoutStyle('left')} className={`p-2 rounded-md border-2 text-sm ${layoutStyle === 'left' ? 'border-gray-400 bg-gray-700' : 'border-gray-600 hover:bg-gray-700/50'}`}>歌詞在左，圖片在右</button>
-                <button onClick={() => setLayoutStyle('right')} className={`p-2 rounded-md border-2 text-sm ${layoutStyle === 'right' ? 'border-gray-400 bg-gray-700' : 'border-gray-600 hover:bg-gray-700/50'}`}>圖片在左，歌詞在右</button>
-              </div>
-            </div>
-
-            <div>
-              <span className="block text-sm font-medium text-gray-300">動畫風格</span>
-              <div className="mt-2 grid grid-cols-2 gap-2">
-                <button onClick={() => setAnimationStyle('disc')} className={`p-2 rounded-md border-2 text-sm ${animationStyle === 'disc' ? 'border-gray-400 bg-gray-700' : 'border-gray-600 hover:bg-gray-700/50'}`}>圓盤</button>
-                <button onClick={() => setAnimationStyle('vertical')} className={`p-2 rounded-md border-2 text-sm ${animationStyle === 'vertical' ? 'border-gray-400 bg-gray-700' : 'border-gray-600 hover:bg-gray-700/50'}`}>垂直</button>
-                {isAiGeneratorUnlocked && (
-                  <button onClick={() => setAnimationStyle('karaoke')} className={`p-2 rounded-md border-2 text-sm ${animationStyle === 'karaoke' ? 'border-gray-400 bg-gray-700' : 'border-gray-600 hover:bg-gray-700/50'}`}>卡拉OK</button>
-                )}
-              </div>
-            </div>
-
-            <div className="pt-4 border-t border-gray-700 space-y-2">
-                <button onClick={handleExportSrt} className="w-full py-2 px-4 border border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-300 bg-gray-700 hover:bg-gray-600">匯出 SRT 字幕檔</button>
-                <button onClick={handleScreenRecordExport} className="w-full py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-bold text-gray-900 bg-[#a6a6a6] hover:bg-[#999999]">匯出影片</button>
-                <p className="text-xs text-center text-gray-500">將透過螢幕錄製功能匯出 WEBM 影片。請在瀏覽器提示中選擇分享此分頁。</p>
-            </div>
+        <div className="p-4 bg-gray-800/50 backdrop-blur-sm rounded-lg border border-gray-700">
+          <div className="w-full flex items-center gap-4">
+            <span className="text-white text-sm font-mono">{formatTime(currentTime)}</span>
+            <input
+              type="range"
+              min="0"
+              max={durationValue}
+              value={currentTime}
+              onChange={handleTimelineChange}
+              className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-pink-500"
+            />
+            <span className="text-white text-sm font-mono">{formatTime(durationValue)}</span>
           </div>
-
-          {/* Preview Panel */}
-          <div className="flex-grow p-4 flex items-center justify-center bg-black">
-            <div className="w-[1280px] h-[720px] transform scale-[0.45] sm:scale-[0.6] md:scale-[0.7] lg:scale-[0.6] xl:scale-[0.8] origin-center">
-              <div ref={previewRef} className="relative w-full h-full bg-gray-700 shadow-lg overflow-hidden" style={{ background: `url(${imageUrl}) center/cover` }}>
-                <div className="absolute inset-0 bg-black/40 backdrop-blur-sm"></div>
-                
-                <div className={`absolute top-0 bottom-0 w-1/2 flex items-center justify-center ${layoutStyle === 'left' ? 'left-0' : 'right-0'}`}>
-                  {animationStyle === 'disc' ? (
-                    <DiscAnimatedLyric 
-                      timedLyrics={timedLyrics}
-                      activeLyricIndex={activeLyricIndex}
-                      fontSize={fontSize}
-                      fontFamily={fontFamily}
-                      activeColor={activeLyricColor}
-                      nextColor={nextLyricColor}
+          <div className="flex items-center justify-between mt-4 flex-wrap gap-2">
+              <button onClick={onBack} className="flex items-center gap-2 text-gray-300 hover:text-white transition-colors text-sm sm:text-base">
+                  <PrevIcon className="w-6 h-6" />
+                  返回編輯
+              </button>
+              <button onClick={handlePlayPause} className="bg-white text-gray-900 rounded-full p-3 transform hover:scale-110 transition-transform">
+                  {isPlaying ? <PauseIcon className="w-6 h-6" /> : <PlayIcon className="w-6 h-6" />}
+              </button>
+              <div className="flex items-center gap-2 sm:gap-4 flex-wrap justify-end">
+                <div className="flex items-center gap-2 text-white">
+                    <label htmlFor="font-size" className="text-xs">大小</label>
+                    <input
+                        id="font-size"
+                        type="range"
+                        min="24"
+                        max="80"
+                        value={fontSize}
+                        onChange={(e) => setFontSize(Number(e.target.value))}
+                        className="w-20 h-1.5 bg-white/30 rounded-full appearance-none cursor-pointer accent-pink-500"
                     />
-                  ) : animationStyle === 'vertical' ? (
-                    <VerticalAnimatedLyric 
-                      activeLyric={activeLyric}
-                      nextLyric={nextLyric}
-                      fontSize={fontSize}
-                      fontFamily={fontFamily}
-                      activeColor={activeLyricColor}
-                      nextColor={nextLyricColor}
-                    />
-                  ) : (
-                    <KaraokeLyric
-                      activeLyric={activeLyric}
-                      currentTime={currentTime}
-                      fontSize={fontSize}
-                      fontFamily={fontFamily}
-                      activeColor={activeLyricColor}
-                      nextColor={nextLyricColor}
-                    />
-                  )}
                 </div>
+                <div className="flex items-center gap-2 text-white">
+                    <label htmlFor="font-family" className="text-xs">字體</label>
+                    <select
+                        id="font-family"
+                        value={fontFamily}
+                        onChange={(e) => setFontFamily(e.target.value)}
+                        className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500"
+                    >
+                        {fontOptions.map(opt => (
+                            <option key={opt.value} value={opt.value} style={{ fontFamily: opt.value }}>{opt.name}</option>
 
-                <div className={`absolute top-0 bottom-0 w-1/2 flex items-center justify-center p-12 ${layoutStyle === 'left' ? 'right-0' : 'left-0'}`}>
-                  <div className="relative">
-                    <img src={imageUrl} alt="Album Art" className="w-80 h-80 object-cover rounded-lg shadow-2xl"/>
-                  </div>
+                        ))}
+                    </select>
                 </div>
-
-                {finalFeedback && (
-                  <div className={`absolute top-8 max-w-sm p-4 drop-shadow-lg ${layoutStyle === 'left' ? 'left-8 text-left' : 'right-8 text-right'}`}>
-                      <p className="text-lg italic text-gray-200" style={{ color: nextLyricColor, fontFamily: fontFamily }}>
-                          "{finalFeedback}"
-                      </p>
-                  </div>
-                )}
-
-                <div className={`absolute bottom-8 text-white p-4 drop-shadow-lg ${layoutStyle === 'left' ? 'right-8 text-right' : 'left-8 text-left'}`}>
-                    <h2 className="text-3xl font-bold" style={{ color: infoColor }}>{songTitle}</h2>
-                    <p className="text-xl" style={{ color: subInfoColor }}>{artistName}</p>
+                 <div className="flex items-center gap-2 text-white">
+                    <label htmlFor="animation-style" className="text-xs">動畫</label>
+                    <select
+                        id="animation-style"
+                        value={animationStyle}
+                        onChange={(e) => setAnimationStyle(e.target.value)}
+                        className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500"
+                    >
+                        {animationOptions.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.name}</option>
+                        ))}
+                    </select>
                 </div>
+                <button onClick={handleExportSrt} className="px-3 py-2 text-sm bg-purple-600 text-white font-semibold rounded-lg hover:bg-purple-700 transition">
+                    導出 SRT
+                </button>
+                <button onClick={handleExportMp4} className="px-3 py-2 text-sm bg-pink-600 text-white font-semibold rounded-lg hover:bg-pink-700 transition">
+                    導出 MP4
+                </button>
               </div>
-            </div>
           </div>
         </div>
 
-        {/* Bottom Bar: Timeline & Playback Controls */}
-        <div className="flex-shrink-0 p-4 bg-gray-800/50 border-t border-gray-700 flex items-center gap-4 z-10">
-          <audio ref={audioRef} src={audioUrl} onLoadedMetadata={() => setDuration(audioRef.current?.duration ?? 0)}></audio>
-          <button onClick={handlePlayPause} className="p-2 bg-white text-gray-900 rounded-full transform hover:scale-110 transition-transform">
-            {isPlaying ? <PauseIcon className="w-6 h-6" /> : <PlayIcon className="w-6 h-6" />}
-          </button>
-          <span className="text-sm font-mono text-gray-400">{formatTime(currentTime)}</span>
-          <input
-            type="range"
-            min="0"
-            max={duration || 0}
-            step="0.01"
-            value={currentTime}
-            onChange={handleTimelineChange}
-            className="w-full h-1.5 bg-gray-600 rounded-full appearance-none cursor-pointer accent-[#a6a6a6]"
-          />
-          <span className="text-sm font-mono text-gray-400">{formatTime(duration || 0)}</span>
-        </div>
         <style>{`
-          .custom-scrollbar::-webkit-scrollbar { width: 8px; }
-          .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-          .custom-scrollbar::-webkit-scrollbar-thumb { background: #a6a6a6; border-radius: 4px; }
-          input[type=color] { -webkit-appearance: none; border: none; padding: 0; }
-          input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
-          input[type="color"]::-webkit-color-swatch { border: none; border-radius: 0.3rem; }
+          @keyframes fade-in-up {
+            0% { opacity: 0; transform: translateY(20px); }
+            100% { opacity: 1; transform: translateY(0); }
+          }
+          .animate-fade-in-up { animation: fade-in-up 0.5s ease-out forwards; }
+          
+          @keyframes fade-in {
+            from { opacity: 0; }
+            to { opacity: 1; }
+          }
+          .animate-fade-in { animation: fade-in 0.5s ease-out forwards; }
+          
+          @keyframes scale-in {
+            from { opacity: 0; transform: scale(0.9); }
+            to { opacity: 1; transform: scale(1); }
+          }
+          .animate-scale-in { animation: scale-in 0.5s ease-out forwards; }
+          
+          @keyframes slide-in-right {
+            from { opacity: 0; transform: translateX(30px); }
+            to { opacity: 1; transform: translateX(0); }
+          }
+          .animate-slide-in-right { animation: slide-in-right 0.5s ease-out forwards; }
         `}</style>
       </div>
     </>
