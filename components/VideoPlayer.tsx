@@ -66,13 +66,45 @@ const colorThemes: { [key: string]: { name: string; active: string; inactive1: s
     info: '#FBBF24',
     subInfo: '#FFFFFF',
   },
+  sunset: {
+    name: '日落',
+    active: '#FDBA74', // Orange 300
+    inactive1: '#FED7AA', // Orange 200
+    inactive2: '#FFEDD5', // Orange 100
+    info: '#FDBA74',
+    subInfo: '#FED7AA',
+  },
+  ocean: {
+    name: '海洋',
+    active: '#7DD3FC', // Sky 300
+    inactive1: '#BAE6FD', // Sky 200
+    inactive2: '#E0F2FE', // Sky 100
+    info: '#7DD3FC',
+    subInfo: '#BAE6FD',
+  },
+  neon: {
+    name: '霓虹',
+    active: '#EC4899', // Pink 500
+    inactive1: '#F9A8D4', // Pink 300
+    inactive2: '#FBCFE8', // Pink 200
+    info: '#EC4899',
+    subInfo: '#F9A8D4',
+  },
+  sakura: {
+    name: '櫻花',
+    active: '#F9A8D4', // Pink 300
+    inactive1: '#FBCFE8', // Pink 200
+    inactive2: '#FCE7F3', // Pink 100
+    info: '#F9A8D4',
+    subInfo: '#FBCFE8',
+  },
 };
 
 const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageUrl, songTitle, artistName, onBack }) => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [isEnded, setIsEnded] = useState(false);
-  const [exportProgress, setExportProgress] = useState<{ message: string; progress: number; details?: string } | null>(null);
+  const [exportProgress, setExportProgress] = useState<{ message: string; progress?: number; details?: string } | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [fontSize, setFontSize] = useState(48);
   const [fontFamily, setFontFamily] = useState('sans-serif');
@@ -84,6 +116,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
   const [includeAlbumArt, setIncludeAlbumArt] = useState(true);
   const [hasPlaybackStarted, setHasPlaybackStarted] = useState(false);
   const isExportCancelled = useRef(false);
+  const [albumArtSize, setAlbumArtSize] = useState(38); // percent of height
+  const [albumArtPosition, setAlbumArtPosition] = useState<'left' | 'right'>('right');
   
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaElementSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
@@ -158,7 +192,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
     return () => {
       if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
         mediaElementSourceRef.current?.disconnect();
-        audioContextRef.current.close();
+        audioContextRef.current.close().catch(e => console.error(e));
       }
     };
   }, []);
@@ -168,614 +202,529 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({ timedLyrics, audioUrl, imageU
       (lyric) => currentTime >= lyric.startTime && currentTime < lyric.endTime
     );
 
-    // If a lyric is active, return its index in lyricsToRender
     if (index !== -1) {
       return index + 2; // +2 for the two dummy lyrics at the start
     }
 
-    // If past the end of the song, point to the first dummy lyric *after* the real ones
     if (timedLyrics.length > 0 && currentTime >= timedLyrics[timedLyrics.length - 1].endTime) {
-      return timedLyrics.length + 2;
+      return timedLyrics.length -1 + 2;
     }
 
-    // Otherwise, we are before the first lyric or in a gap. Point to the last dummy lyric *before* the real ones.
-    return 1;
+    if (timedLyrics.length > 0 && currentTime < timedLyrics[0].startTime) {
+      return 1; // Before the first lyric, so second dummy is "current"
+    }
+
+    let lastPassedIndex = -1;
+    for (let i = 0; i < timedLyrics.length; i++) {
+      if (currentTime >= timedLyrics[i].endTime) {
+        lastPassedIndex = i;
+      } else {
+        break; // Optimization: lyrics are sorted
+      }
+    }
+    if (lastPassedIndex !== -1) {
+      return lastPassedIndex + 2;
+    }
+
+    return 1; // Default to before the first lyric
   }, [currentTime, timedLyrics]);
 
-  const getLyricStyle = useCallback((index: number, currentIdx: number, baseFontSize: number = fontSize, baseFontWeight: string = fontWeight, baseStrokeWidth: number = strokeWidth, baseStrokeColor: string = strokeColor) => {
-    const position = index - currentIdx;
-    const theme = colorThemes[colorTheme];
 
-    let opacity = 0;
-    let scale = 0.6; // Font size scale
-    let yOffset = 0;
-    let color = theme.inactive2;
+  const handlePlayPause = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
     
-    // Use a base line height relative to the main font size for consistent spacing
-    const lineHeight = baseFontSize * 1.4;
-
-    switch (position) {
-        case 0: // Current line
-            opacity = 1;
-            scale = 1;
-            color = theme.active;
-            yOffset = 0;
-            break;
-        case -1: // Line above
-            opacity = 0.7;
-            scale = 0.8;
-            color = theme.inactive1;
-            yOffset = -lineHeight;
-            break;
-        case 1: // Line below
-            opacity = 0.7;
-            scale = 0.8;
-            color = theme.inactive1;
-            yOffset = lineHeight;
-            break;
-        case -2: // 2 lines above
-            opacity = 0.4;
-            scale = 0.6;
-            color = theme.inactive2;
-            yOffset = -lineHeight * 1.8; // Space them out a bit more
-            break;
-        case 2: // 2 lines below
-            opacity = 0.4;
-            scale = 0.6;
-            color = theme.inactive2;
-            yOffset = lineHeight * 1.8;
-            break;
-        default: // Off-screen lyrics
-            opacity = 0;
-            scale = 0.5;
-    }
-
-    const finalFontSize = baseFontSize * scale;
-    const finalStrokeWidth = baseStrokeWidth * scale;
-
-    const style: React.CSSProperties = {
-        fontFamily: fontFamily,
-        fontWeight: baseFontWeight,
-        textShadow: '2px 2px 5px rgba(0,0,0,0.5)',
-        fontSize: `${finalFontSize}px`,
-        color: color,
-        opacity: opacity,
-        transform: `translateY(${yOffset}px)`,
-        WebkitTextStrokeWidth: finalStrokeWidth > 0 ? `${finalStrokeWidth}px` : undefined,
-        WebkitTextStrokeColor: finalStrokeWidth > 0 ? baseStrokeColor : undefined,
-        transition: 'all 0.4s ease-in-out',
-        position: 'absolute',
-        width: '100%',
-        left: 0,
-        textAlign: 'center',
-    };
-
-    if (includeAlbumArt) {
-      style.textAlign = 'left';
-    }
-
-    return { 
-        style, 
-        yOffset, 
-        finalFontSize, 
-        color, 
-        opacity,
-        font: `${baseFontWeight} ${finalFontSize}px ${fontFamily}`,
-        scaledStrokeWidth: finalStrokeWidth,
-    };
-  }, [fontFamily, fontWeight, strokeWidth, strokeColor, colorTheme, includeAlbumArt, fontSize]);
-
-
-  const handlePlayPause = () => {
-    if (audioRef.current) {
-        if (isPlaying) {
-            audioRef.current.pause();
-        } else {
-            if (audioRef.current.ended) {
-                audioRef.current.currentTime = 0;
-                setCurrentTime(0);
-                setIsEnded(false);
-            }
-            if (!hasPlaybackStarted) {
-                setHasPlaybackStarted(true);
-            }
-            audioRef.current.play();
+    if (!audioContextRef.current) {
+        try {
+            const context = new (window.AudioContext || (window as any).webkitAudioContext)();
+            const source = context.createMediaElementSource(audio);
+            source.connect(context.destination);
+            audioContextRef.current = context;
+            mediaElementSourceRef.current = source;
+        } catch (e) {
+            console.error("Error creating AudioContext:", e);
         }
-        setIsPlaying(!isPlaying);
     }
-  };
-  
-  const handleTimelineChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+
+
+    if (audio.paused) {
+      if (isEnded) {
+        audio.currentTime = 0;
+        setCurrentTime(0);
+        setIsEnded(false);
+      }
+      audio.play().catch(e => console.error("Error playing audio:", e));
+      setIsPlaying(true);
+      if (!hasPlaybackStarted) setHasPlaybackStarted(true);
+    } else {
+      audio.pause();
+      setIsPlaying(false);
+    }
+  }, [isEnded, hasPlaybackStarted]);
+
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const time = parseFloat(e.target.value);
     if (audioRef.current) {
       audioRef.current.currentTime = time;
       setCurrentTime(time);
-      setIsEnded(false);
-      if (!hasPlaybackStarted && time > 0) {
-        setHasPlaybackStarted(true);
-      }
+      if(isEnded) setIsEnded(false);
     }
   };
-  
-  const formatTime = (seconds: number) => {
-    const minutes = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return isNaN(minutes) || isNaN(secs) ? '0:00' : `${minutes}:${secs.toString().padStart(2, '0')}`;
-  };
 
-  const formatSrtTime = (seconds: number) => {
-    const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
-    const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
-    const s = Math.floor(seconds % 60).toString().padStart(2, '0');
-    const ms = (seconds % 1).toFixed(3).substring(2);
-    return `${h}:${m}:${s},${ms}`;
-  };
-
-  const generateSrtContent = () => {
-    let srtContent = '';
-    timedLyrics.forEach((lyric, index) => {
-        const startTime = formatSrtTime(lyric.startTime);
-        const endTime = formatSrtTime(lyric.endTime);
-        srtContent += `${index + 1}\n${startTime} --> ${endTime}\n${lyric.text}\n\n`;
-    });
-    return srtContent;
-  }
-
-  const handleExportSrt = () => {
-    const srtContent = generateSrtContent();
-    const blob = new Blob([srtContent], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'lyrics.srt';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  const handleCancelExport = () => {
-    isExportCancelled.current = true;
-  };
-
-  const handleExportVideo = async () => {
-    if (!audioRef.current || !imageUrl) return;
+  const handleExport = useCallback(async () => {
     isExportCancelled.current = false;
-    setExportProgress({ message: '正在初始化...', progress: 0 });
+    setExportProgress({ message: '正在初始化...', progress: undefined });
 
-    const canvas = document.createElement('canvas');
-    const selectedResolution = resolutions[resolution];
-    canvas.width = selectedResolution.width;
-    canvas.height = selectedResolution.height;
-    const ctx = canvas.getContext('2d');
-
-    if (!ctx) {
-      alert('無法初始化 Canvas 進行匯出。');
-      setExportProgress(null);
-      return;
-    }
-
-    const loadImage = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => resolve(img);
-        img.onerror = (err) => reject(err);
-        img.src = src;
+    const { createFFmpeg, fetchFile } = (window as any).FFmpeg;
+    const ffmpeg = createFFmpeg({
+      corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
+      log: true,
+      progress: ({ ratio }) => {
+        if (isExportCancelled.current) {
+          try { ffmpeg.exit(); } catch(e) {}
+          return;
+        };
+        const encodingProgress = 80 + ratio * 20; // Encoding is final 20%
+        setExportProgress({ 
+          message: '正在編碼影片...',
+          progress: encodingProgress,
+          details: `進度: ${(ratio * 100).toFixed(0)}%`
+        });
+      },
     });
 
     try {
-      setExportProgress({ message: '正在載入資源...', progress: 5 });
+      await ffmpeg.load();
+
+      setExportProgress({ message: '正在讀取素材...', progress: 0, details: '音訊' });
+      ffmpeg.FS('writeFile', 'audio.mp3', await fetchFile(audioUrl));
       
-      const [bgImage, albumImage] = await Promise.all([
-        loadImage(imageUrl), 
-        loadImage(imageUrl),
-      ]);
-
-      setExportProgress({ message: '資源載入完畢', progress: 10 });
+      setExportProgress({ message: '正在讀取素材...', progress: 2, details: '圖片' });
+      ffmpeg.FS('writeFile', 'background.jpg', await fetchFile(imageUrl));
       
-      const audio = audioRef.current;
-      const wasPlaying = isPlaying;
-      if (wasPlaying) handlePlayPause(); // Pause playback before starting
-
-      // Lazily create and reuse the AudioContext and MediaElementSourceNode
-      if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-        mediaElementSourceRef.current = null; // Force source recreation if context is new
-      }
-      const audioContext = audioContextRef.current;
+      const res = resolutions[resolution];
+      const canvas = document.createElement('canvas');
+      canvas.width = res.width;
+      canvas.height = res.height;
+      const ctx = canvas.getContext('2d')!;
       
-      if (!mediaElementSourceRef.current) {
-        mediaElementSourceRef.current = audioContext.createMediaElementSource(audio);
-        mediaElementSourceRef.current.connect(audioContext.destination);
-      }
-      const audioSource = mediaElementSourceRef.current;
+      const totalDuration = audioRef.current?.duration || 0;
+      const frameRate = 30;
+      const totalFrames = Math.ceil(totalDuration * frameRate);
 
-      // Mute audio output during export by disconnecting from main destination
-      try {
-          audioSource.disconnect(audioContext.destination);
-      } catch(e) {
-          console.warn("Audio source was not connected to destination, continuing.", e);
-      }
-      const audioDestination = audioContext.createMediaStreamDestination();
-      audioSource.connect(audioDestination);
-      const audioStream = audioDestination.stream;
-
-
-      const videoStream = canvas.captureStream(30); // 30 FPS
-
-      const combinedStream = new MediaStream([
-        ...videoStream.getVideoTracks(),
-        ...audioStream.getAudioTracks(),
-      ]);
-
-      const MimeType = MediaRecorder.isTypeSupported('video/mp4') ? 'video/mp4' : 'video/webm';
-      const fileExtension = MimeType.includes('mp4') ? 'mp4' : 'webm';
-
-      const recorder = new MediaRecorder(combinedStream, { mimeType: MimeType });
-      const recordedChunks: Blob[] = [];
-
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          recordedChunks.push(event.data);
-        }
-      };
-
-      recorder.onstop = () => {
-        if (!isExportCancelled.current) {
-          const blob = new Blob(recordedChunks, { type: MimeType });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `${songTitle}-${artistName}-${resolution}.${fileExtension}`;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          URL.revokeObjectURL(url);
-        }
-        
-        // Cleanup
-        combinedStream.getTracks().forEach(track => track.stop());
-        
-        // Disconnect from recording stream and reconnect to speakers
-        try {
-          audioSource.disconnect(audioDestination);
-        } catch (e) {
-          console.warn("Could not disconnect audio destination.", e);
-        }
-        try {
-            audioSource.connect(audioContext.destination);
-        } catch(e) {
-            console.warn("Could not reconnect audio source to destination.", e);
-        }
-        setExportProgress(null);
-        if(wasPlaying) audio.play();
-      };
+      const bgImage = new Image();
+      bgImage.crossOrigin = "anonymous";
+      bgImage.src = imageUrl;
+      await new Promise((resolve, reject) => {
+        bgImage.onload = resolve;
+        bgImage.onerror = reject;
+      });
       
-      let animationFrameId: number;
-      audio.currentTime = 0;
-      audio.play();
-      recorder.start();
-      const exportStartTime = Date.now();
+      const albumImage = includeAlbumArt ? bgImage : null;
       
-      const scaleFactor = canvas.height / 720; // Base resolution is 720p for scaling
-      const exportFontSize = fontSize * scaleFactor;
-      const exportStrokeWidth = strokeWidth; // Stroke width is not scaled with font size by default, but with resolution
-
-      const theme = colorThemes[colorTheme];
-
-      const drawFrame = () => {
-        const currentPlaybackTime = audio.currentTime;
-        const duration = audio.duration;
-
-        if (currentPlaybackTime >= duration || recorder.state !== 'recording' || isExportCancelled.current) {
-          if (recorder.state === 'recording') recorder.stop();
-          if (audio) {
-            audio.pause();
-            audio.currentTime = 0;
-          }
-          cancelAnimationFrame(animationFrameId);
-          return;
-        }
-
-        const progress = (currentPlaybackTime / duration) * 100;
-        
-        const elapsedTime = (Date.now() - exportStartTime) / 1000; // in seconds
-        let estimatedTimeRemainingDetails = '';
-        if (progress > 1 && elapsedTime > 1) {
-            const totalTime = elapsedTime / (progress / 100);
-            const remainingTimeSeconds = Math.round(totalTime - elapsedTime);
-            if (remainingTimeSeconds > 0 && isFinite(remainingTimeSeconds)) {
-              const minutes = Math.floor(remainingTimeSeconds / 60);
-              const seconds = remainingTimeSeconds % 60;
-              estimatedTimeRemainingDetails = `預計剩餘 ${minutes}分 ${seconds.toString().padStart(2, '0')}秒`;
-            }
-        }
-
-        setExportProgress({ 
-          message: `經紀人趕工中...`, 
-          progress,
-          details: estimatedTimeRemainingDetails
-        });
-
-        // --- Start Drawing on Canvas ---
+      const drawFrame = (time: number) => {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(bgImage, 0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "rgba(0,0,0,0.3)";
+        ctx.fillRect(0,0, canvas.width, canvas.height);
         
-        ctx.save();
-        ctx.filter = 'blur(16px) brightness(0.7)';
-        ctx.drawImage(bgImage, -20 * scaleFactor, -20 * scaleFactor, canvas.width + 40 * scaleFactor, canvas.height + 40 * scaleFactor);
-        ctx.restore();
-
-        ctx.fillStyle = 'rgba(0,0,0,0.4)';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
-        const lyricIdx = timedLyrics.findIndex(l => currentPlaybackTime >= l.startTime && currentPlaybackTime < l.endTime);
-        const canvasCurrentIndex = (lyricIdx !== -1) ? lyricIdx + 2 
-          : (currentPlaybackTime < (timedLyrics[0]?.startTime ?? 0) ? 1 
-          : timedLyrics.length + 2);
-
-        [-2, -1, 0, 1, 2].forEach(offset => {
-          const lyricToDraw = lyricsToRender[canvasCurrentIndex + offset];
-          if (lyricToDraw && lyricToDraw.text) {
-            const { yOffset, color, opacity, font, scaledStrokeWidth } = getLyricStyle(
-                canvasCurrentIndex + offset,
-                canvasCurrentIndex,
-                exportFontSize,
-                fontWeight,
-                exportStrokeWidth * scaleFactor, // Scale stroke width with resolution
-                strokeColor
-            );
-            
-            ctx.save();
-            ctx.font = font;
-            ctx.textAlign = includeAlbumArt ? 'left' : 'center';
-            ctx.globalAlpha = opacity;
-            ctx.textBaseline = 'middle';
-
-            const x = includeAlbumArt ? 60 * scaleFactor : canvas.width / 2;
-            const y = canvas.height / 2 + (yOffset * scaleFactor);
-
-            // Stroke
-            if (scaledStrokeWidth > 0) {
-              ctx.strokeStyle = strokeColor;
-              ctx.lineWidth = scaledStrokeWidth;
-              ctx.strokeText(lyricToDraw.text, x, y);
-            }
-            
-            // Fill
-            ctx.fillStyle = color;
-            ctx.fillText(lyricToDraw.text, x, y);
-
-            ctx.restore();
-          }
-        });
-
-        if (includeAlbumArt) {
-            const leftColWidth = canvas.width * (3 / 5);
-            const rightColWidth = canvas.width * (2 / 5);
-    
-            const albumArtSize = canvas.height * 0.38;
-            const albumX = leftColWidth + (rightColWidth - albumArtSize) / 2;
-            const albumY = (canvas.height - albumArtSize) / 2 - (30 * scaleFactor);
-    
-            ctx.save();
-            ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-            ctx.shadowBlur = 20 * scaleFactor;
-            ctx.shadowOffsetX = 5 * scaleFactor;
-            ctx.shadowOffsetY = 10 * scaleFactor;
-            ctx.drawImage(albumImage, albumX, albumY, albumArtSize, albumArtSize);
-            ctx.restore();
-    
-            ctx.fillStyle = theme.info;
-            ctx.textAlign = 'center';
-            ctx.font = `${fontWeight} ${24 * scaleFactor}px ${fontFamily}`;
-            ctx.fillText(songTitle, leftColWidth + rightColWidth / 2, albumY + albumArtSize + (40 * scaleFactor), rightColWidth * 0.9);
-            
-            ctx.fillStyle = theme.subInfo;
-            ctx.font = `${fontWeight} ${20 * scaleFactor}px ${fontFamily}`; // Ensure font weight applies to info text
-            ctx.fillText(artistName, leftColWidth + rightColWidth / 2, albumY + albumArtSize + (70 * scaleFactor), rightColWidth * 0.9);
+        if (albumImage) {
+            const artSize = canvas.height * (albumArtSize / 100);
+            const margin = artSize * 0.1;
+            const x = albumArtPosition === 'right' ? canvas.width - artSize - margin : margin;
+            const y = (canvas.height - artSize) / 2;
+            ctx.drawImage(albumImage, x, y, artSize, artSize);
         }
 
-        // --- End Drawing ---
-        animationFrameId = requestAnimationFrame(drawFrame);
+        const currentLyricIndex = timedLyrics.findIndex(l => time >= l.startTime && time < l.endTime);
+        const theme = colorThemes[colorTheme];
+        
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        for(let i = -2; i <= 2; i++) {
+            const lyricIndex = currentLyricIndex + i;
+            if (lyricIndex < 0 || lyricIndex >= timedLyrics.length) continue;
+            
+            const lyric = timedLyrics[lyricIndex];
+            const yPos = canvas.height / 2 + (i * (fontSize * 1.5));
+            
+            ctx.font = `${fontWeight} ${fontSize}px ${fontFamily}`;
+            if (strokeWidth > 0) {
+                ctx.strokeStyle = strokeColor;
+                ctx.lineWidth = strokeWidth * 2;
+                ctx.strokeText(lyric.text, canvas.width / 2, yPos);
+            }
+            
+            if (i === 0) {
+                const progress = (time - lyric.startTime) / (lyric.endTime - lyric.startTime);
+                const gradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
+                gradient.addColorStop(0.5 * (1-progress), theme.inactive1);
+                gradient.addColorStop(0.5, theme.active);
+                gradient.addColorStop(0.5 * (1+progress), theme.active);
+                gradient.addColorStop(1, theme.inactive1);
+
+                const textWidth = ctx.measureText(lyric.text).width;
+                const gradient2 = ctx.createLinearGradient(
+                  (canvas.width - textWidth) / 2, 0,
+                  (canvas.width + textWidth) / 2, 0
+                );
+                gradient2.addColorStop(0, theme.active);
+                gradient2.addColorStop(progress, theme.active);
+                gradient2.addColorStop(progress + 0.001, theme.inactive1);
+                gradient2.addColorStop(1, theme.inactive1);
+                ctx.fillStyle = gradient2;
+
+            } else if (i < 0) {
+                ctx.fillStyle = theme.inactive2;
+            } else {
+                ctx.fillStyle = theme.inactive1;
+            }
+            
+            ctx.fillText(lyric.text, canvas.width / 2, yPos);
+        }
+
+        ctx.font = `bold ${fontSize * 0.6}px ${fontFamily}`;
+        ctx.fillStyle = theme.info;
+        ctx.textAlign = 'left';
+        ctx.fillText(songTitle, 40, 50);
+
+        ctx.font = `normal ${fontSize * 0.45}px ${fontFamily}`;
+        ctx.fillStyle = theme.subInfo;
+        ctx.fillText(artistName, 40, 50 + (fontSize * 0.6) + 10);
       };
-      animationFrameId = requestAnimationFrame(drawFrame);
+
+      setExportProgress({ message: '正在生成影格...', progress: 5, details: `0 / ${totalFrames}` });
+
+      for (let i = 0; i < totalFrames; i++) {
+        if (isExportCancelled.current) throw new Error("Export cancelled");
+        const time = i / frameRate;
+        drawFrame(time);
+        const frameData = canvas.toDataURL('image/jpeg', 0.8);
+        ffmpeg.FS('writeFile', `frame${i.toString().padStart(5, '0')}.jpg`, await fetchFile(frameData));
+        
+        // Progress: 5% for loading, 75% for frame generation
+        const frameGenProgress = 5 + ((i + 1) / totalFrames) * 75;
+        setExportProgress({
+            message: '正在生成影格...',
+            progress: frameGenProgress,
+            details: `${i + 1} / ${totalFrames}`
+        });
+      }
+
+      setExportProgress({ message: '正在編碼影片...', progress: 80, details: '這可能需要一些時間。' });
+      
+      await ffmpeg.run(
+        '-framerate', `${frameRate}`,
+        '-i', 'frame%05d.jpg',
+        '-i', 'audio.mp3',
+        '-c:v', 'libx264',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-pix_fmt', 'yuv420p',
+        '-t', `${totalDuration}`,
+        '-y',
+        'output.mp4'
+      );
+      
+      setExportProgress({ message: '正在準備下載...', progress: 100 });
+
+      const data = ffmpeg.FS('readFile', 'output.mp4');
+      const videoBlobUrl = URL.createObjectURL(new Blob([data.buffer], { type: 'video/mp4' }));
+
+      const link = document.createElement('a');
+      link.href = videoBlobUrl;
+      link.download = `${songTitle} - ${artistName} (Lyrics).mp4`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(videoBlobUrl);
+
+      setExportProgress({ message: '匯出完成！', progress: 100 });
+      setTimeout(() => setExportProgress(null), 3000);
 
     } catch (error) {
-      console.error("影片匯出失敗:", error);
-      alert('影片匯出失敗！可能因為無法載入圖片或您的瀏覽器不支援此功能。');
+      console.error(error);
+      if ((error as Error)?.message !== "Export cancelled") {
+        alert(`匯出時發生錯誤: ${error}`);
+      }
       setExportProgress(null);
+    } finally {
+      try { ffmpeg.exit(); } catch(e) {}
     }
+  }, [
+    audioUrl, imageUrl, timedLyrics, fontSize, fontFamily, fontWeight, 
+    strokeColor, strokeWidth, colorTheme, resolution, includeAlbumArt,
+    albumArtSize, albumArtPosition, songTitle, artistName
+  ]);
+
+  const formatTime = (seconds: number) => {
+    const totalDuration = audioRef.current?.duration || 0;
+    if (isNaN(seconds) || totalDuration === 0) return '0:00';
+    const minutes = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${minutes}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const currentTheme = colorThemes[colorTheme];
+
+  const renderLyricLine = (lyric: TimedLyric, position: -2 | -1 | 0 | 1 | 2) => {
+    let opacity = 0;
+    let color = '';
+    let scale = 1;
+    let yOffset = 0;
+    let isCurrent = false;
+
+    switch (position) {
+      case -2:
+        opacity = 0.2; color = currentTheme.inactive2; scale = 0.9; yOffset = -fontSize * 3;
+        break;
+      case -1:
+        opacity = 0.5; color = currentTheme.inactive2; scale = 0.95; yOffset = -fontSize * 1.5;
+        break;
+      case 0:
+        opacity = 1.0; color = currentTheme.active; scale = 1.0; yOffset = 0; isCurrent = true;
+        break;
+      case 1:
+        opacity = 0.8; color = currentTheme.inactive1; scale = 0.95; yOffset = fontSize * 1.5;
+        break;
+      case 2:
+        opacity = 0.4; color = currentTheme.inactive1; scale = 0.9; yOffset = fontSize * 3;
+        break;
+    }
+
+    const duration = lyric.endTime - lyric.startTime;
+    const progress = (duration > 0) ? Math.max(0, Math.min(1, (currentTime - lyric.startTime) / duration)) : 1;
+
+    const textShadow = strokeWidth > 0 ? `${strokeColor} ${strokeWidth}px ${strokeWidth}px 0px, ${strokeColor} ${strokeWidth}px -${strokeWidth}px 0px, ${strokeColor} -${strokeWidth}px ${strokeWidth}px 0px, ${strokeColor} -${strokeWidth}px -${strokeWidth}px 0px, ${strokeColor} 0px ${strokeWidth}px 0px, ${strokeColor} 0px -${strokeWidth}px 0px, ${strokeColor} -${strokeWidth}px 0px 0px, ${strokeColor} ${strokeWidth}px 0px 0px` : 'none';
+
+    return (
+        <p
+          key={`${lyric.startTime}-${position}`}
+          className="text-center transition-all duration-500 ease-in-out whitespace-pre-wrap"
+          style={{
+            fontSize: `${fontSize * scale}px`,
+            fontFamily: fontFamily,
+            fontWeight: fontWeight,
+            color: isCurrent ? 'transparent' : color,
+            opacity: lyric.text ? opacity : 0,
+            transform: `translateY(${yOffset}px)`,
+            position: 'absolute',
+            width: '100%',
+            left: 0,
+            textShadow: textShadow,
+          }}
+        >
+          {isCurrent ? (
+            <span
+              className="bg-clip-text text-transparent bg-gradient-to-r"
+              style={{
+                backgroundImage: `linear-gradient(to right, ${currentTheme.active}, ${currentTheme.active} ${progress * 100}%, ${currentTheme.inactive1} ${progress * 100}%)`,
+              }}
+            >
+              {lyric.text}
+            </span>
+          ) : (
+            lyric.text
+          )}
+        </p>
+    );
   };
   
-  const durationValue = audioRef.current?.duration || 0;
-  const currentTheme = colorThemes[colorTheme];
+
+  const resolutionStyle = resolutions[resolution];
+  const aspectRatio = resolutionStyle.width / resolutionStyle.height;
 
   return (
     <>
-      {exportProgress && <Loader message={exportProgress.message} progress={exportProgress.progress} details={exportProgress.details} onCancel={handleCancelExport} />}
-      <div className="w-full max-w-5xl mx-auto">
-        <audio ref={audioRef} src={audioUrl} onLoadedMetadata={() => setCurrentTime(0)} />
-        
-        {/* Video Preview Area */}
-        <div className="w-full aspect-video bg-gray-900 rounded-xl shadow-2xl ring-1 ring-white/10 relative overflow-hidden mb-4">
-          <img src={imageUrl} alt="背景" className="absolute inset-0 w-full h-full object-cover z-0 filter blur-xl scale-110" />
-          <div className="absolute inset-0 bg-black/40" />
-          
-           <div className="relative z-10 w-full h-full flex p-4 sm:p-8 items-center">
-              {/* Lyrics Column */}
-              <div className={`h-full flex flex-col justify-center overflow-hidden transition-all duration-500 ease-in-out ${includeAlbumArt ? 'w-3/5 items-start' : 'w-full items-center'}`}>
-                  <div 
-                      className={`relative w-full h-full flex justify-center items-center transition-opacity duration-500 ${hasPlaybackStarted ? 'opacity-100' : 'opacity-70'}`}
-                  >
-                      {[-2, -1, 0, 1, 2].map(offset => {
-                          const lyric = lyricsToRender[currentIndex + offset];
-                          if (!lyric) return null;
-                          const { style } = getLyricStyle(currentIndex + offset, currentIndex);
-                          return (
-                              <p
-                                  key={`${currentIndex + offset}-${lyric.text}`}
-                                  className={`px-2 py-1 tracking-wide leading-relaxed whitespace-nowrap`}
-                                  style={style}
-                              >
-                                  {lyric.text || '\u00A0'}
-                              </p>
-                          );
+      {exportProgress && (
+        <Loader 
+          message={exportProgress.message} 
+          progress={exportProgress.progress} 
+          details={exportProgress.details} 
+          onCancel={() => {
+            isExportCancelled.current = true;
+            setExportProgress(null);
+          }}
+        />
+      )}
+      <div className="w-full max-w-screen-2xl mx-auto h-[90vh] flex flex-col lg:flex-row gap-8 items-start p-4">
+        <div className="flex-grow w-full h-full flex flex-col items-center justify-center">
+            {/* Player Preview */}
+            <div className="w-full relative shadow-2xl rounded-lg overflow-hidden border border-gray-700 bg-black" style={{ aspectRatio: aspectRatio }}>
+              <img src={imageUrl} alt="Background" className="absolute inset-0 w-full h-full object-cover filter blur-sm brightness-75" />
+              <div className="absolute inset-0 bg-black/30"></div>
+              
+              {includeAlbumArt && (
+                <div 
+                  className={`absolute top-1/2 -translate-y-1/2 transition-all duration-300`} 
+                  style={{ 
+                    height: `${albumArtSize}%`, 
+                    aspectRatio: 1, 
+                    left: albumArtPosition === 'left' ? `${albumArtSize * 0.1}%` : undefined,
+                    right: albumArtPosition === 'right' ? `${albumArtSize * 0.1}%` : undefined,
+                  }}
+                >
+                  <img src={imageUrl} alt="Album Art" className="w-full h-full object-cover rounded-lg shadow-lg" />
+                </div>
+              )}
+
+              <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
+                  <div className="relative w-11/12 h-full flex items-center justify-center">
+                      {[-2, -1, 0, 1, 2].map(pos => {
+                          const lyric = lyricsToRender[currentIndex + pos];
+                          return lyric ? renderLyricLine(lyric, pos as any) : null;
                       })}
                   </div>
               </div>
 
-              {/* Album Art Column (Conditional) */}
-               {includeAlbumArt && (
-                  <div className="w-2/5 h-full flex flex-col justify-center items-center pl-4">
-                    <img src={imageUrl} alt="專輯封面" className="w-full max-w-[280px] aspect-square object-cover bg-black/20 rounded-xl shadow-2xl ring-1 ring-white/10" />
-                    <div className="text-center mt-4 p-2 w-full max-w-[280px]">
-                        <p className="font-bold text-lg truncate" title={songTitle} style={{ color: currentTheme.info }}>{songTitle}</p>
-                        <p className="truncate" title={artistName} style={{ color: currentTheme.subInfo }}>{artistName}</p>
-                    </div>
+              <div className="absolute top-0 left-0 p-8 text-white" style={{ textShadow: '0 1px 3px rgba(0,0,0,0.5)' }}>
+                <h2 className="font-bold" style={{ fontSize: fontSize * 0.6, fontFamily, color: currentTheme.info }}>{songTitle}</h2>
+                <h3 style={{ fontSize: fontSize * 0.45, fontFamily, color: currentTheme.subInfo, opacity: 0.9 }}>{artistName}</h3>
+              </div>
+              
+              {!hasPlaybackStarted && (
+                <div 
+                  className="absolute inset-0 bg-black/50 flex items-center justify-center cursor-pointer group"
+                  onClick={handlePlayPause}
+                >
+                  <div className="bg-white/20 group-hover:bg-white/30 p-6 rounded-full transition-colors">
+                    <PlayIcon className="w-16 h-16 text-white" />
                   </div>
-               )}
+                </div>
+              )}
             </div>
-        </div>
 
-        {/* Controls Area */}
-        <div className="p-4 bg-gray-800/50 backdrop-blur-sm rounded-lg border border-gray-700">
-          <div className="w-full flex items-center gap-4">
-            <span className="text-white text-sm font-mono">{formatTime(currentTime)}</span>
-            <input
-              type="range"
-              min="0"
-              max={durationValue}
-              value={currentTime}
-              onChange={handleTimelineChange}
-              className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-[#a6a6a6]"
-            />
-            <span className="text-white text-sm font-mono">{formatTime(durationValue)}</span>
-          </div>
-          <div className="flex items-center justify-between mt-4 flex-wrap gap-2">
-              <button onClick={onBack} className="flex items-center gap-2 text-gray-300 hover:text-white transition-colors text-sm sm:text-base">
-                  <PrevIcon className="w-6 h-6" />
-                  返回
-              </button>
-              <button onClick={handlePlayPause} className="bg-white text-gray-900 rounded-full p-3 transform hover:scale-110 transition-transform">
+            <audio ref={audioRef} src={audioUrl} crossOrigin="anonymous" />
+            <div className="w-full mt-4 bg-gray-800 rounded-lg p-4 space-y-3 border border-gray-700">
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-gray-400 font-mono w-12 text-center">{formatTime(currentTime)}</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={audioRef.current?.duration || 0}
+                  step="0.01"
+                  value={currentTime}
+                  onChange={handleSeek}
+                  className="w-full h-1.5 bg-gray-600 rounded-full appearance-none cursor-pointer accent-[#a6a6a6]"
+                />
+                <span className="text-sm text-gray-400 font-mono w-12 text-center">{formatTime(audioRef.current?.duration || 0)}</span>
+              </div>
+              <div className="flex items-center justify-center">
+                <button 
+                  onClick={handlePlayPause} 
+                  className="bg-white text-gray-900 rounded-full p-3 transform hover:scale-110 transition-transform"
+                >
                   {isPlaying ? <PauseIcon className="w-6 h-6" /> : <PlayIcon className="w-6 h-6" />}
-              </button>
-              <div className="flex items-center gap-2 sm:gap-4 flex-wrap justify-end">
-                <div className="flex items-center gap-2 text-white">
-                    <label htmlFor="font-size" className="text-xs">大小</label>
-                    <input 
-                        id="font-size"
-                        type="number"
-                        min="16"
-                        max="120"
-                        step="1"
-                        value={fontSize}
-                        onChange={(e) => setFontSize(Number(e.target.value))}
-                        className="w-20 px-2 py-1 bg-gray-900/50 border border-gray-600 rounded-md text-xs focus:outline-none focus:ring-1 focus:ring-gray-500 text-center"
-                    />
-                </div>
-                <div className="flex items-center gap-2 text-white">
-                    <label htmlFor="font-family" className="text-xs">字體</label>
-                    <select
-                        id="font-family"
-                        value={fontFamily}
-                        onChange={(e) => setFontFamily(e.target.value)}
-                        className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-500"
-                    >
-                        {fontOptions.map(opt => (
-                            <option key={opt.value} value={opt.value} style={{ fontFamily: opt.value }}>{opt.name}</option>
-                        ))}
-                    </select>
-                </div>
-                {/* New: Font Weight */}
-                <div className="flex items-center gap-2 text-white">
-                    <label htmlFor="font-weight" className="text-xs">粗細</label>
-                    <select
-                        id="font-weight"
-                        value={fontWeight}
-                        onChange={(e) => setFontWeight(e.target.value)}
-                        className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-500"
-                    >
-                        {fontWeights.map(opt => (
-                            <option key={opt.value} value={opt.value}>{opt.name}</option>
-                        ))}
-                    </select>
-                </div>
-                {/* New: Stroke Width */}
-                <div className="flex items-center gap-2 text-white">
-                    <label htmlFor="stroke-width" className="text-xs">描邊寬度</label>
-                    <input
-                        id="stroke-width"
-                        type="number"
-                        min="0"
-                        max="10"
-                        step="1"
-                        value={strokeWidth}
-                        onChange={(e) => setStrokeWidth(Number(e.target.value))}
-                        className="w-16 px-2 py-1 bg-gray-900/50 border border-gray-600 rounded-md text-xs focus:outline-none focus:ring-1 focus:ring-gray-500 text-center"
-                    />
-                </div>
-                {/* New: Stroke Color */}
-                <div className="flex items-center gap-2 text-white">
-                    <label htmlFor="stroke-color" className="text-xs">描邊顏色</label>
-                    <input
-                        id="stroke-color"
-                        type="color"
-                        value={strokeColor}
-                        onChange={(e) => setStrokeColor(e.target.value)}
-                        className="w-12 h-8 p-0 border-none rounded-md cursor-pointer overflow-hidden bg-gray-900/50"
-                    />
-                </div>
-                <div className="flex items-center gap-2 text-white">
-                    <label htmlFor="color-theme" className="text-xs">主題</label>
-                    <select
-                        id="color-theme"
-                        value={colorTheme}
-                        onChange={(e) => setColorTheme(e.target.value)}
-                        className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-500"
-                    >
-                        {Object.entries(colorThemes).map(([key, theme]) => (
-                            <option key={key} value={key}>{theme.name}</option>
-                        ))}
-                    </select>
-                </div>
-                 <div className="flex items-center gap-2 text-white">
-                    <label htmlFor="resolution" className="text-xs">解析度</label>
-                    <select
-                        id="resolution"
-                        value={resolution}
-                        onChange={(e) => setResolution(e.target.value)}
-                        className="bg-gray-900/50 border border-gray-600 rounded-md px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-gray-500"
-                    >
-                        <option value="720p">720p (1280x720)</option>
-                        <option value="1080p">1080p (1920x1080)</option>
-                    </select>
-                </div>
-                 <label htmlFor="include-album-art" className="flex items-center gap-2 text-white cursor-pointer">
-                    <span className="text-xs select-none">包含封面</span>
-                    <div className="relative">
-                        <input
-                            id="include-album-art"
-                            type="checkbox"
-                            checked={includeAlbumArt}
-                            onChange={(e) => setIncludeAlbumArt(e.target.checked)}
-                            className="sr-only peer"
-                        />
-                        <div className="w-9 h-5 bg-gray-600 rounded-full peer peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-gray-500 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#a6a6a6]"></div>
-                    </div>
-                </label>
-                <button onClick={handleExportSrt} className="px-3 py-2 text-sm bg-gray-600 text-white font-semibold rounded-lg hover:bg-gray-500 transition">
-                    導出 SRT
-                </button>
-                <button onClick={handleExportVideo} className="px-3 py-2 text-sm bg-[#a6a6a6] text-gray-900 font-semibold rounded-lg hover:bg-[#999999] border border-white/50 transition">
-                    導出影片
                 </button>
               </div>
+            </div>
+        </div>
+        
+        <div className="w-full lg:w-[400px] h-full flex-shrink-0 bg-gray-800/50 backdrop-blur-sm rounded-lg border border-gray-700 p-6 overflow-y-auto custom-scrollbar">
+          <div className="flex justify-between items-center mb-6">
+            <h3 className="text-xl font-bold text-white">自訂樣式</h3>
+             <button onClick={onBack} className="flex items-center gap-1 text-sm text-gray-300 hover:text-white transition-colors">
+              <PrevIcon className="w-5 h-5" />
+              返回
+            </button>
           </div>
-          <div className="mt-3 text-center">
-            <p className="text-xs text-gray-500">注意：影片匯出在您的瀏覽器中進行，過程可能需要數分鐘且消耗大量資源。建議使用電腦操作，並避免匯出過長的影片。</p>
+          <div className="space-y-6">
+            <details open className="space-y-4">
+              <summary className="font-semibold cursor-pointer text-gray-300">字體設定</summary>
+              <div>
+                <label className="text-sm text-gray-400 block mb-2">字體</label>
+                <select value={fontFamily} onChange={e => setFontFamily(e.target.value)} className="w-full p-2 bg-gray-900 border border-gray-600 rounded text-white focus:ring-gray-500 focus:border-gray-500">
+                  {fontOptions.map(f => <option key={f.value} value={f.value} style={{fontFamily: f.value}}>{f.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-sm text-gray-400 block mb-2">字重</label>
+                <select value={fontWeight} onChange={e => setFontWeight(e.target.value)} className="w-full p-2 bg-gray-900 border border-gray-600 rounded text-white focus:ring-gray-500 focus:border-gray-500">
+                  {fontWeights.map(f => <option key={f.value} value={f.value}>{f.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-sm text-gray-400 block mb-2">字體大小: {fontSize}px</label>
+                <input type="range" min="20" max="100" value={fontSize} onChange={e => setFontSize(parseInt(e.target.value))} className="w-full h-1.5 bg-gray-600 rounded-full appearance-none cursor-pointer accent-[#a6a6a6]" />
+              </div>
+            </details>
+            
+            <details className="space-y-4">
+              <summary className="font-semibold cursor-pointer text-gray-300">顏色與描邊</summary>
+              <div>
+                <label className="text-sm text-gray-400 block mb-2">顏色主題</label>
+                <div className="grid grid-cols-3 gap-2">
+                    {Object.entries(colorThemes).map(([key, theme]) => (
+                        <button key={key} onClick={() => setColorTheme(key)} className={`p-2 rounded border-2 transition-colors ${colorTheme === key ? 'border-white bg-gray-700' : 'border-transparent hover:bg-gray-700/50'}`}>
+                           <div className="flex items-center justify-center gap-1.5">
+                                <div className="w-4 h-4 rounded-full border border-white/20" style={{backgroundColor: theme.active}}></div>
+                                <div className="w-4 h-4 rounded-full border border-white/20" style={{backgroundColor: theme.inactive1}}></div>
+                           </div>
+                           <span className="text-xs mt-1 block text-gray-300">{theme.name}</span>
+                        </button>
+                    ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-sm text-gray-400 block mb-2">描邊寬度: {strokeWidth}px</label>
+                <input type="range" min="0" max="10" step="0.5" value={strokeWidth} onChange={e => setStrokeWidth(parseFloat(e.target.value))} className="w-full h-1.5 bg-gray-600 rounded-full appearance-none cursor-pointer accent-[#a6a6a6]" />
+              </div>
+              <div>
+                <label className="text-sm text-gray-400 block mb-2">描邊顏色</label>
+                <input type="color" value={strokeColor} onChange={e => setStrokeColor(e.target.value)} className="w-full h-10 p-1 bg-gray-900 border border-gray-600 rounded cursor-pointer" />
+              </div>
+            </details>
+
+            <details className="space-y-4">
+                <summary className="font-semibold cursor-pointer text-gray-300">專輯封面</summary>
+                <div className="flex items-center justify-between">
+                    <label htmlFor="include-art" className="text-sm text-gray-400">顯示專輯封面</label>
+                    <button onClick={() => setIncludeAlbumArt(p => !p)} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${includeAlbumArt ? 'bg-[#a6a6a6]' : 'bg-gray-600'}`}>
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${includeAlbumArt ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                </div>
+                 {includeAlbumArt && (
+                    <>
+                    <div>
+                        <label className="text-sm text-gray-400 block mb-2">封面大小: {albumArtSize}%</label>
+                        <input type="range" min="20" max="60" value={albumArtSize} onChange={e => setAlbumArtSize(parseInt(e.target.value))} className="w-full h-1.5 bg-gray-600 rounded-full appearance-none cursor-pointer accent-[#a6a6a6]" />
+                    </div>
+                    <div>
+                        <label className="text-sm text-gray-400 block mb-2">封面位置</label>
+                        <div className="flex gap-2">
+                           <button onClick={() => setAlbumArtPosition('left')} className={`w-full p-2 rounded border transition-colors ${albumArtPosition === 'left' ? 'bg-gray-600 border-gray-500' : 'bg-gray-900 border-gray-600 hover:bg-gray-700/50'}`}>左側</button>
+                           <button onClick={() => setAlbumArtPosition('right')} className={`w-full p-2 rounded border transition-colors ${albumArtPosition === 'right' ? 'bg-gray-600 border-gray-500' : 'bg-gray-900 border-gray-600 hover:bg-gray-700/50'}`}>右側</button>
+                        </div>
+                    </div>
+                    </>
+                )}
+            </details>
+
+            <details open className="space-y-4">
+              <summary className="font-semibold cursor-pointer text-gray-300">匯出設定</summary>
+               <div>
+                <label className="text-sm text-gray-400 block mb-2">解析度</label>
+                <select value={resolution} onChange={e => setResolution(e.target.value)} className="w-full p-2 bg-gray-900 border border-gray-600 rounded text-white focus:ring-gray-500 focus:border-gray-500">
+                  {Object.keys(resolutions).map(r => <option key={r} value={r}>{r} ({resolutions[r].width}x{resolutions[r].height})</option>)}
+                </select>
+              </div>
+              <button
+                onClick={handleExport}
+                className="w-full flex justify-center py-3 px-4 border border-white/50 rounded-md shadow-sm text-sm font-bold text-gray-900 bg-[#a6a6a6] hover:bg-[#999999] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-900 focus:ring-gray-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              >
+                匯出影片
+              </button>
+              <p className="text-xs text-center text-gray-500">影片匯出在您的瀏覽器本機進行，可能需要較長時間。</p>
+            </details>
           </div>
         </div>
       </div>
+      <style>{`
+        .custom-scrollbar::-webkit-scrollbar { width: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #a6a6a6; border-radius: 4px; }
+      `}</style>
     </>
   );
 };
